@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "energy_parser_pro" # What users type in 'pip install ...'
+version = "0.1.0"
+description = "A utility to reshape specific energy supplier XLS files."
+readme = "README.md"
+authors = [{name = "Your Name", email = "you@example.com"}]
+dependencies = [
+    "pandas",
+    "openpyxl", # Needed for Excel reading
+]
+
+[project.urls]
+"Source" = "https://github.com/yourusername/energy-parser"
