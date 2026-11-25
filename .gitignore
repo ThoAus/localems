@@ -28,7 +28,11 @@ data/db/*.sqlite
 data/db/*.sqlite-*
 data/db/backups/*
 data/editor/*
+data_demo/
 !data/**/.gitkeep
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
 
 # dbt artifacts & DuckDB runtime files
 dbt/target/

@@ -2,8 +2,8 @@
 -- Allows 96 (normal day), 92 (EU spring-forward DST 23h day), and 100 (EU fall-back DST 25h day).
 with daily_15m as (
     select
-        messpunkt_id,
-        sparte,
+        metering_point_id,
+        energy_carrier,
         channel,
         local_date,
         count(*) as interval_count

@@ -1,8 +1,9 @@
 select
-    messpunkt_id,
-    objekt_id,
-    lower(sparte) as sparte,
-    name as messpunkt_name,
+    metering_point_id,
+    parent_metering_point_id,
+    object_id,
+    lower(energy_carrier) as energy_carrier,
+    name as metering_point_name,
     external_id,
     unit as master_unit,
     lower(meter_type) as meter_type,
@@ -11,4 +12,4 @@ select
     try_cast(valid_to as date) as valid_to,
     notes,
     updated_at
-from masterdata.main.messpunkte
+from masterdata.main.metering_points

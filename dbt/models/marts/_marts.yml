@@ -2,21 +2,25 @@ version: 2
 
 models:
   - name: mart_quarterly_consumption
-    description: "Quarterly energy and infrastructure consumption KPIs by sector, hierarchy level, and object."
+    description: "Quarterly energy and infrastructure consumption KPIs by energy carrier, object class, hierarchy level, and object."
     columns:
       - name: year_quarter
         tests: [not_null]
-      - name: sparte
+      - name: energy_carrier
         tests: [not_null]
-      - name: objekt_id
+      - name: object_class
+        tests: [not_null]
+      - name: object_id
         tests: [not_null]
       - name: total_consumption
         tests: [not_null]
 
   - name: mart_plausibility_summary
-    description: "Quarterly data quality, interval completeness, and residual plausibility scorecard per metering point."
+    description: "Quarterly data quality, meter tree depth, interval completeness, and residual plausibility scorecard."
     columns:
       - name: year_quarter
         tests: [not_null]
-      - name: messpunkt_id
+      - name: metering_point_id
+        tests: [not_null]
+      - name: meter_level
         tests: [not_null]

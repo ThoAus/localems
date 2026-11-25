@@ -2,9 +2,9 @@ with raw_parquet as (
     select
         timestamp,
         interval_minutes,
-        messpunkt_id,
-        objekt_id,
-        sparte,
+        metering_point_id,
+        object_id,
+        energy_carrier,
         channel,
         value,
         unit,
@@ -17,7 +17,7 @@ with raw_parquet as (
         source,
         ingested_at
     from read_parquet(
-        '{{ env_var("EM_TOOLS_PARQUET_GLOB", "../data/parquet/sparte=*/year=*/*.parquet") }}',
+        '{{ env_var("EM_TOOLS_PARQUET_GLOB", "../data/parquet/energy_carrier=*/year=*/*.parquet") }}',
         hive_partitioning = false
     )
 ),
@@ -35,9 +35,9 @@ enriched as (
             cast(extract(quarter from (timestamp at time zone '{{ var("report_timezone", "Europe/Rome") }}')) as varchar)
         ) as year_quarter,
         interval_minutes,
-        messpunkt_id,
-        objekt_id as raw_objekt_id,
-        lower(sparte) as sparte,
+        metering_point_id,
+        object_id as raw_object_id,
+        lower(energy_carrier) as energy_carrier,
         channel,
         cast(value as double) as value,
         unit,

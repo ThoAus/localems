@@ -1,11 +1,20 @@
 version: 2
 
 models:
+  - name: int_metering_point_tree
+    description: "Recursive meter tree deriving meter_level (0 = main meter), root_metering_point_id, and tree_path."
+    columns:
+      - name: metering_point_id
+        tests: [not_null, unique]
+      - name: meter_level
+        tests: [not_null]
+      - name: root_metering_point_id
+        tests: [not_null]
   - name: int_interval_measurements
-    description: "15-minute interval measurements enriched with SQLite metering point and object metadata."
-  - name: int_messpunkt_daily
-    description: "Daily metering point rollups aligned to rule validity dates."
+    description: "15-minute interval measurements enriched with recursive meter tree and object metadata."
+  - name: int_metering_point_daily
+    description: "Daily metering point rollups aligned to estimation rule validity dates."
   - name: int_hierarchy_residuals
-    description: "Multi-level sub-meter deduction and residual calculations per metering point and day."
+    description: "Multi-level direct sub-meter deductions and automatic residual calculations per metering point and day."
   - name: int_object_daily_allocated
-    description: "Daily consumption allocated to objects across measured, residual, and estimated shares."
+    description: "Daily consumption allocated to objects (across mixed object_class values) via measured, residual, and estimated shares."

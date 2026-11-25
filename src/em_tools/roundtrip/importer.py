@@ -107,7 +107,6 @@ def _read_sheet_rows(
 
     parsed: list[tuple[dict[str, Any], str | None]] = []
     for row_vals in ws.iter_rows(min_row=2, values_only=True):
-        # Skip completely empty trailing rows
         business_vals = [row_vals[col_indices[c]] for c in expected_cols]
         if all(
             v is None or (isinstance(v, str) and v.strip() == "") for v in business_vals
@@ -125,6 +124,27 @@ def _read_sheet_rows(
     return parsed
 
 
+def _sort_metering_point_inserts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order metering_point inserts parent-before-child so self-FK inserts never fail."""
+    by_id = {row["metering_point_id"]: row for row in rows}
+    ordered: list[dict[str, Any]] = []
+    visited: set[str] = set()
+
+    def visit(mpid: str) -> None:
+        if mpid in visited:
+            return
+        row = by_id[mpid]
+        parent = row.get("parent_metering_point_id")
+        if parent and parent in by_id and parent not in visited:
+            visit(parent)
+        visited.add(mpid)
+        ordered.append(row)
+
+    for mpid in by_id:
+        visit(mpid)
+    return ordered
+
+
 def import_from_editor(
     db_path: Path | str,
     input_xlsx: Path | str,
@@ -135,11 +155,11 @@ def import_from_editor(
     """Import master-data changes from an edited .xlsx workbook into SQLite.
 
     Workflow:
-      1. Parse sheets and normalize cells.
+      1. Parse sheets and normalize cells (ignoring read-only export helper columns).
       2. Compare against SQLite using fast row-hash check + column-level diff.
-      3. Treat rows with blank `rule_id` in `hierarchie_regeln` as new inserts.
+      3. Treat rows with blank `rule_id` in `estimation_rules` as new inserts.
       4. Soft-delete (set `active = 0`) active DB rows missing from the workbook.
-      5. Validate the entire proposed target state (FKs, factors, dates, overlaps, cycles).
+      5. Validate the entire proposed target state (FKs, carrier/unit match, cycles, factors).
       6. Unless `dry_run=True`, create an automatic SQLite backup and commit atomically.
     """
     repo = MasterDataRepository(db_path, backups_dir=backups_dir)
@@ -171,8 +191,8 @@ def import_from_editor(
         for incoming_row, stored_hash in sheet_data[table]:
             pk_val = incoming_row[pk_col]
 
-            # Auto-assigned rule_id on new hierarchie_regeln rows
-            if table == "hierarchie_regeln" and pk_val is None:
+            # Auto-assigned rule_id on new estimation_rules rows
+            if table == "estimation_rules" and pk_val is None:
                 diff.inserts.append(incoming_row)
                 target_rows.append(incoming_row)
                 continue
@@ -219,7 +239,6 @@ def import_from_editor(
                 soft_deleted["active"] = 0
                 target_rows.append(soft_deleted)
             else:
-                # Preserve already-inactive historical row untouched
                 target_rows.append(existing_row)
 
         diffs[table] = diff
@@ -236,16 +255,22 @@ def import_from_editor(
     report.backup_path = repo.create_backup(label="pre_import")
     now_iso = utc_now_iso()
 
-    # Apply all changes atomically in FK-safe order
+    # Apply all changes atomically in FK-safe order (with deferred self-FK support)
     with repo.connect() as conn:
-        for table in ("objekte", "messpunkte", "hierarchie_regeln"):
+        conn.execute("PRAGMA defer_foreign_keys = ON;")
+        for table in ("objects", "metering_points", "estimation_rules"):
             diff = diffs[table]
             columns = TABLE_COLUMNS[table]
             pk_col = PRIMARY_KEYS[table]
 
-            # Inserts
-            for row in diff.inserts:
-                if table == "hierarchie_regeln" and row["rule_id"] is None:
+            inserts = (
+                _sort_metering_point_inserts(diff.inserts)
+                if table == "metering_points"
+                else diff.inserts
+            )
+
+            for row in inserts:
+                if table == "estimation_rules" and row["rule_id"] is None:
                     insert_cols = [c for c in columns if c != "rule_id"] + ["updated_at"]
                     placeholders = ", ".join("?" for _ in insert_cols)
                     values = [row[c] for c in columns if c != "rule_id"] + [now_iso]
@@ -264,7 +289,6 @@ def import_from_editor(
                         values,
                     )
 
-            # Updates
             for upd in diff.updates:
                 set_parts = [f"{chg.field} = ?" for chg in upd.changes] + ["updated_at = ?"]
                 values = [chg.new_value for chg in upd.changes] + [now_iso, upd.key]
@@ -273,7 +297,6 @@ def import_from_editor(
                     values,
                 )
 
-            # Soft-deletes
             for pk_val in diff.soft_deletes:
                 conn.execute(
                     f"UPDATE {table} SET active = 0, updated_at = ? WHERE {pk_col} = ?",

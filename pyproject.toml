@@ -25,6 +25,10 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.6",
 ]
+notebook = [
+    "ipykernel>=6.29",
+    "jupyterlab>=4.2",
+]
 
 [project.scripts]
 em-tools = "em_tools.cli:main"

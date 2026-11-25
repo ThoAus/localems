@@ -17,16 +17,16 @@ class StandardCsvReader(BaseReader):
     Expected minimum columns (or supplied via kwargs):
       - `timestamp`
       - `value`
-      - `messpunkt_id` (or kwarg `messpunkt_id`)
-      - `sparte` (or kwarg `sparte`)
+      - `metering_point_id` (or kwarg `metering_point_id`)
+      - `energy_carrier` (or kwarg `energy_carrier`)
       - `unit` (or kwarg `unit`)
-    Optional columns like `objekt_id`, `interval_minutes`, `channel`, `reading_type`,
+    Optional columns like `object_id`, `interval_minutes`, `channel`, `reading_type`,
     `quality`, `peak_power_kw`, `flow_rate`, `pressure_bar`, `burn_duration_min` are
     preserved automatically when present.
     """
 
     name = "csv_standard"
-    description = "Generic tidy CSV reader (smart meters, sub-meters, water, lighting, manual)."
+    description = "Generic tidy CSV reader (smart meters, sub-meters, water, gas, manual)."
 
     def read(
         self,
@@ -35,8 +35,8 @@ class StandardCsvReader(BaseReader):
         separator: str = ",",
         decimal_comma: bool = False,
         default_timezone: str = "Europe/Rome",
-        messpunkt_id: str | None = None,
-        sparte: str | None = None,
+        metering_point_id: str | None = None,
+        energy_carrier: str | None = None,
         unit: str | None = None,
         interval_minutes: int | None = 15,
         reading_type: str | None = None,
@@ -53,10 +53,10 @@ class StandardCsvReader(BaseReader):
         )
 
         additions: list[pl.Expr] = []
-        if "messpunkt_id" not in df.columns and messpunkt_id is not None:
-            additions.append(pl.lit(messpunkt_id).alias("messpunkt_id"))
-        if "sparte" not in df.columns and sparte is not None:
-            additions.append(pl.lit(sparte).alias("sparte"))
+        if "metering_point_id" not in df.columns and metering_point_id is not None:
+            additions.append(pl.lit(metering_point_id).alias("metering_point_id"))
+        if "energy_carrier" not in df.columns and energy_carrier is not None:
+            additions.append(pl.lit(energy_carrier).alias("energy_carrier"))
         if "unit" not in df.columns and unit is not None:
             additions.append(pl.lit(unit).alias("unit"))
         if "interval_minutes" not in df.columns and interval_minutes is not None:

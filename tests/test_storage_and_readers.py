@@ -19,8 +19,8 @@ def test_normalize_converts_local_time_to_utc_and_adds_optional_columns() -> Non
         {
             "timestamp": [datetime(2026, 1, 15, 1, 0), datetime(2026, 7, 15, 2, 0)],
             "interval_minutes": [15, 15],
-            "messpunkt_id": ["MP-1", "MP-1"],
-            "sparte": ["Strom", "STROM"],
+            "metering_point_id": ["MP-1", "MP-1"],
+            "energy_carrier": ["Electricity", "ELECTRICITY"],
             "value": [12.5, 8.0],
             "unit": ["kWh", "kWh"],
             "source": ["test", "test"],
@@ -28,32 +28,32 @@ def test_normalize_converts_local_time_to_utc_and_adds_optional_columns() -> Non
     )
 
     norm = normalize_measurements(df, default_timezone="Europe/Rome")
-    assert norm["sparte"].to_list() == ["strom", "strom"]
+    assert norm["energy_carrier"].to_list() == ["electricity", "electricity"]
     # Jan is CET (UTC+1) -> 00:00Z; Jul is CEST (UTC+2) -> 00:00Z
     assert norm["timestamp"].to_list() == [
         datetime(2026, 1, 15, 0, 0, tzinfo=UTC),
         datetime(2026, 7, 15, 0, 0, tzinfo=UTC),
     ]
     assert norm["peak_power_kw"].null_count() == 2
-    assert norm["channel"].to_list() == ["verbrauch", "verbrauch"]
+    assert norm["channel"].to_list() == ["consumption", "consumption"]
 
 
-def test_normalize_rejects_invalid_sparte() -> None:
+def test_normalize_rejects_invalid_energy_carrier() -> None:
     df = pl.DataFrame(
         {
             "timestamp": [datetime(2026, 1, 1, 0, 0, tzinfo=UTC)],
-            "messpunkt_id": ["MP-1"],
-            "sparte": ["unknown_sector"],
+            "metering_point_id": ["MP-1"],
+            "energy_carrier": ["unknown_carrier"],
             "value": [1.0],
             "unit": ["kWh"],
             "source": ["test"],
         }
     )
-    with pytest.raises(SchemaValidationError, match="Invalid sparte"):
+    with pytest.raises(SchemaValidationError, match="Invalid energy_carrier"):
         normalize_measurements(df)
 
 
-def test_parquet_store_partitions_by_sparte_and_year_and_deduplicates(tmp_path: Path) -> None:
+def test_parquet_store_partitions_by_carrier_and_year_and_deduplicates(tmp_path: Path) -> None:
     store = ParquetMeasurementStore(tmp_path / "parquet")
 
     t0 = datetime(2025, 12, 31, 23, 45, tzinfo=UTC)
@@ -62,8 +62,8 @@ def test_parquet_store_partitions_by_sparte_and_year_and_deduplicates(tmp_path: 
         {
             "timestamp": [t0, t1, t1],
             "interval_minutes": [15, 15, 15],
-            "messpunkt_id": ["MP-EL-1", "MP-EL-1", "MP-W-1"],
-            "sparte": ["strom", "strom", "trinkwasser"],
+            "metering_point_id": ["MP-EL-1", "MP-EL-1", "MP-W-1"],
+            "energy_carrier": ["electricity", "electricity", "water"],
             "value": [10.0, 20.0, 2.5],
             "unit": ["kWh", "kWh", "m3"],
             "peak_power_kw": [40.0, 80.0, None],
@@ -78,10 +78,26 @@ def test_parquet_store_partitions_by_sparte_and_year_and_deduplicates(tmp_path: 
     )
     s1 = store.write(df1)
     assert s1.partitions_written == 3
-    assert (tmp_path / "parquet" / "sparte=strom" / "year=2025" / "measurements.parquet").exists()
-    assert (tmp_path / "parquet" / "sparte=strom" / "year=2026" / "measurements.parquet").exists()
     assert (
-        tmp_path / "parquet" / "sparte=trinkwasser" / "year=2026" / "measurements.parquet"
+        tmp_path
+        / "parquet"
+        / "energy_carrier=electricity"
+        / "year=2025"
+        / "measurements.parquet"
+    ).exists()
+    assert (
+        tmp_path
+        / "parquet"
+        / "energy_carrier=electricity"
+        / "year=2026"
+        / "measurements.parquet"
+    ).exists()
+    assert (
+        tmp_path
+        / "parquet"
+        / "energy_carrier=water"
+        / "year=2026"
+        / "measurements.parquet"
     ).exists()
 
     # Re-ingest overlapping interval with corrected value and newer ingested_at
@@ -89,8 +105,8 @@ def test_parquet_store_partitions_by_sparte_and_year_and_deduplicates(tmp_path: 
         {
             "timestamp": [t1],
             "interval_minutes": [15],
-            "messpunkt_id": ["MP-EL-1"],
-            "sparte": ["strom"],
+            "metering_point_id": ["MP-EL-1"],
+            "energy_carrier": ["electricity"],
             "value": [25.0],
             "unit": ["kWh"],
             "peak_power_kw": [100.0],
@@ -102,7 +118,7 @@ def test_parquet_store_partitions_by_sparte_and_year_and_deduplicates(tmp_path: 
     assert s2.partitions_written == 1
     assert s2.rows_stored == 1
 
-    out = store.read(sparte="strom", year=2026)
+    out = store.read(energy_carrier="electricity", year=2026)
     assert out.height == 1
     assert out["value"][0] == pytest.approx(25.0)
     assert out["peak_power_kw"][0] == pytest.approx(100.0)
@@ -122,8 +138,8 @@ def test_standard_csv_reader(tmp_path: Path) -> None:
         csv_file,
         separator=";",
         decimal_comma=True,
-        messpunkt_id="MP-TW-1",
-        sparte="trinkwasser",
+        metering_point_id="MP-DW-1",
+        energy_carrier="water",
         unit="m3",
     )
     assert df.height == 2
@@ -138,7 +154,7 @@ def test_edyna_xlsx_reader(tmp_path: Path) -> None:
     ws = wb.active
     ws.title = "IT001E99999999"
 
-    # Build header: GIORNO + 96 quarter-hour slots + 4 trailing summary cols
+    # Build raw Edyna-format header: provider date column + 96 quarter-hour slots + 4 summary cols
     slots = [f"{h:02d}{m:02d}" for h in range(24) for m in (0, 15, 30, 45)]
     ws.append(["GIORNO", *slots, "TOT", "F1", "F2", "F3"])
     ws.append(["15/01/2026", *["1,5" for _ in range(96)], 144.0, 50, 50, 44])
@@ -150,8 +166,8 @@ def test_edyna_xlsx_reader(tmp_path: Path) -> None:
     df = reader.read(xlsx_file)
 
     assert df.height == 192
-    assert df["messpunkt_id"].unique().to_list() == ["IT001E99999999"]
-    assert df["sparte"].unique().to_list() == ["strom"]
+    assert df["metering_point_id"].unique().to_list() == ["IT001E99999999"]
+    assert df["energy_carrier"].unique().to_list() == ["electricity"]
     assert df["value"].sum() == pytest.approx(96 * 1.5 + 96 * 2.0)
     # 2026-01-15 00:00 Europe/Rome == 2026-01-14 23:00 UTC
     assert df["timestamp"].min() == datetime(2026, 1, 14, 23, 0, tzinfo=UTC)

@@ -1,7 +1,12 @@
 select
-    messpunkt_id,
-    objekt_id,
-    sparte,
+    metering_point_id,
+    parent_metering_point_id,
+    root_metering_point_id,
+    meter_level,
+    is_main_meter,
+    tree_path,
+    object_id,
+    energy_carrier,
     channel,
     unit,
     local_date,
@@ -17,9 +22,14 @@ select
     sum(coalesce(burn_duration_min, 0.0)) as total_burn_duration_min
 from {{ ref('int_interval_measurements') }}
 group by
-    messpunkt_id,
-    objekt_id,
-    sparte,
+    metering_point_id,
+    parent_metering_point_id,
+    root_metering_point_id,
+    meter_level,
+    is_main_meter,
+    tree_path,
+    object_id,
+    energy_carrier,
     channel,
     unit,
     local_date,

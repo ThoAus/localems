@@ -1,7 +1,7 @@
 -- Fails if any interval measurement has negative consumption
 select
-    messpunkt_id,
-    sparte,
+    metering_point_id,
+    energy_carrier,
     channel,
     timestamp_utc,
     value

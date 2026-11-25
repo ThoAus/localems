@@ -1,4 +1,4 @@
-"""SQLite DDL schema for energy master data, groupings, and hierarchy/estimation rules."""
+"""SQLite DDL schema for energy master data: objects, meter tree, and estimation rules."""
 
 from __future__ import annotations
 
@@ -8,70 +8,67 @@ from pathlib import Path
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS objekte (
-    objekt_id   TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    objekt_typ  TEXT NOT NULL CHECK (
-        objekt_typ IN ('gebaeude', 'trinkwasser', 'beleuchtung', 'sonstiges')
+CREATE TABLE IF NOT EXISTS objects (
+    object_id    TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    object_class TEXT NOT NULL CHECK (
+        object_class IN (
+            'building', 'school', 'public_lighting', 'water_supply',
+            'sports', 'mobility', 'other'
+        )
     ),
-    ebene_1     TEXT NOT NULL,
-    ebene_2     TEXT NOT NULL,
-    active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-    notes       TEXT,
-    updated_at  TEXT NOT NULL
+    level_1      TEXT NOT NULL,
+    level_2      TEXT NOT NULL,
+    active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    notes        TEXT,
+    updated_at   TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS messpunkte (
-    messpunkt_id TEXT PRIMARY KEY,
-    objekt_id    TEXT NOT NULL REFERENCES objekte(objekt_id),
-    sparte       TEXT NOT NULL CHECK (
-        sparte IN ('strom', 'trinkwasser', 'beleuchtung', 'waerme', 'gas', 'sonstiges')
+CREATE TABLE IF NOT EXISTS metering_points (
+    metering_point_id        TEXT PRIMARY KEY,
+    parent_metering_point_id TEXT REFERENCES metering_points(metering_point_id),
+    object_id                TEXT NOT NULL REFERENCES objects(object_id),
+    energy_carrier           TEXT NOT NULL CHECK (
+        energy_carrier IN ('electricity', 'water', 'gas', 'heating', 'other')
     ),
-    name         TEXT NOT NULL,
-    external_id  TEXT,
-    unit         TEXT NOT NULL,
-    meter_type   TEXT NOT NULL DEFAULT 'smartmeter' CHECK (
+    name                     TEXT NOT NULL,
+    external_id              TEXT,
+    unit                     TEXT NOT NULL,
+    meter_type               TEXT NOT NULL DEFAULT 'smartmeter' CHECK (
         meter_type IN ('smartmeter', 'submeter', 'manual', 'virtual')
     ),
-    active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-    valid_from   TEXT,
-    valid_to     TEXT,
-    notes        TEXT,
-    updated_at   TEXT NOT NULL,
+    active                   INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    valid_from               TEXT,
+    valid_to                 TEXT,
+    notes                    TEXT,
+    updated_at               TEXT NOT NULL,
+    CHECK (parent_metering_point_id IS NULL OR parent_metering_point_id <> metering_point_id),
     CHECK (valid_to IS NULL OR valid_from IS NULL OR valid_to >= valid_from)
 );
 
-CREATE TABLE IF NOT EXISTS hierarchie_regeln (
-    rule_id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    parent_messpunkt_id TEXT NOT NULL REFERENCES messpunkte(messpunkt_id),
-    child_messpunkt_id  TEXT REFERENCES messpunkte(messpunkt_id),
-    target_objekt_id    TEXT REFERENCES objekte(objekt_id),
-    rule_type           TEXT NOT NULL CHECK (
-        rule_type IN ('submeter_deduction', 'estimation_factor')
-    ),
-    factor              REAL NOT NULL DEFAULT 1.0 CHECK (factor > 0.0 AND factor <= 1.0),
-    valid_from          TEXT NOT NULL,
-    valid_to            TEXT,
-    active              INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-    notes               TEXT,
-    updated_at          TEXT NOT NULL,
-    CHECK (valid_to IS NULL OR valid_to >= valid_from),
-    CHECK (
-        (
-            rule_type = 'submeter_deduction'
-            AND child_messpunkt_id IS NOT NULL
-            AND child_messpunkt_id <> parent_messpunkt_id
-        )
-        OR
-        (rule_type = 'estimation_factor' AND target_objekt_id IS NOT NULL)
-    )
+CREATE TABLE IF NOT EXISTS estimation_rules (
+    rule_id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_metering_point_id TEXT NOT NULL REFERENCES metering_points(metering_point_id),
+    target_object_id         TEXT NOT NULL REFERENCES objects(object_id),
+    factor                   REAL NOT NULL CHECK (factor > 0.0 AND factor <= 1.0),
+    valid_from               TEXT NOT NULL,
+    valid_to                 TEXT,
+    active                   INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    notes                    TEXT,
+    updated_at               TEXT NOT NULL,
+    CHECK (valid_to IS NULL OR valid_to >= valid_from)
 );
 
-CREATE INDEX IF NOT EXISTS idx_messpunkte_objekt ON messpunkte(objekt_id);
-CREATE INDEX IF NOT EXISTS idx_messpunkte_sparte ON messpunkte(sparte);
-CREATE INDEX IF NOT EXISTS idx_regeln_parent ON hierarchie_regeln(parent_messpunkt_id);
-CREATE INDEX IF NOT EXISTS idx_regeln_child ON hierarchie_regeln(child_messpunkt_id);
-CREATE INDEX IF NOT EXISTS idx_regeln_active ON hierarchie_regeln(active, valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_metering_points_parent
+    ON metering_points(parent_metering_point_id);
+CREATE INDEX IF NOT EXISTS idx_metering_points_object
+    ON metering_points(object_id);
+CREATE INDEX IF NOT EXISTS idx_metering_points_carrier
+    ON metering_points(energy_carrier);
+CREATE INDEX IF NOT EXISTS idx_estimation_source
+    ON estimation_rules(source_metering_point_id);
+CREATE INDEX IF NOT EXISTS idx_estimation_active
+    ON estimation_rules(active, valid_from, valid_to);
 """
 
 

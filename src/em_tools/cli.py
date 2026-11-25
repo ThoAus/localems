@@ -70,10 +70,16 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Reader name (run `em-tools readers` to list available readers).",
     )
-    p_ing.add_argument("--sparte", default=None, help="Override/default sparte (e.g. strom).")
+    p_ing.add_argument(
+        "--energy-carrier",
+        default=None,
+        help="Override/default energy_carrier (e.g. electricity, water, gas, heating).",
+    )
     p_ing.add_argument("--unit", default=None, help="Override/default unit (e.g. kWh, m3).")
-    p_ing.add_argument("--messpunkt-id", default=None, help="Override/default messpunkt_id.")
-    p_ing.add_argument("--objekt-id", default=None, help="Optional objekt_id.")
+    p_ing.add_argument(
+        "--metering-point-id", default=None, help="Override/default metering_point_id."
+    )
+    p_ing.add_argument("--object-id", default=None, help="Optional object_id.")
     p_ing.add_argument(
         "--separator",
         default=",",
@@ -146,14 +152,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             "separator": args.separator,
             "decimal_comma": args.decimal_comma,
         }
-        if args.sparte is not None:
-            kwargs["sparte"] = args.sparte
+        if args.energy_carrier is not None:
+            kwargs["energy_carrier"] = args.energy_carrier
         if args.unit is not None:
             kwargs["unit"] = args.unit
-        if args.messpunkt_id is not None:
-            kwargs["messpunkt_id"] = args.messpunkt_id
-        if args.objekt_id is not None:
-            kwargs["objekt_id"] = args.objekt_id
+        if args.metering_point_id is not None:
+            kwargs["metering_point_id"] = args.metering_point_id
+        if args.object_id is not None:
+            kwargs["object_id"] = args.object_id
 
         df = reader.read(args.input_file, **kwargs)
         store = ParquetMeasurementStore(

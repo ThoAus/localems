@@ -1,6 +1,6 @@
--- Fails if active estimation factors on any parent meter exceed 1.0 on any day
+-- Fails if active estimation factors on any meter exceed 1.0 on any day
 select
-    messpunkt_id,
+    metering_point_id,
     local_date,
     estimation_factor_sum
 from {{ ref('int_hierarchy_residuals') }}

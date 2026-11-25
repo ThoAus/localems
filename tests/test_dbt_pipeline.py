@@ -1,4 +1,4 @@
-"""End-to-end integration test: CLI + Parquet + SQLite roundtrip + dbt-duckdb run & test."""
+"""End-to-end integration test: CLI + Parquet + meter tree roundtrip + dbt-duckdb run & test."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ DBT_DIR = REPO_ROOT / "dbt"
 
 def _make_full_day_rows(
     day: datetime,
-    messpunkt_id: str,
-    sparte: str,
+    metering_point_id: str,
+    energy_carrier: str,
     unit: str,
     daily_total: float,
     *,
@@ -38,8 +38,8 @@ def _make_full_day_rows(
             {
                 "timestamp": ts,
                 "interval_minutes": 15,
-                "messpunkt_id": messpunkt_id,
-                "sparte": sparte,
+                "metering_point_id": metering_point_id,
+                "energy_carrier": energy_carrier,
                 "value": per_interval,
                 "unit": unit,
                 "peak_power_kw": peak_power_kw,
@@ -49,7 +49,7 @@ def _make_full_day_rows(
     return rows
 
 
-def test_end_to_end_cli_parquet_roundtrip_and_dbt_marts(tmp_path: Path) -> None:
+def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None:
     if importlib.util.find_spec("dbt.cli.main") is None:
         pytest.skip("dbt-duckdb is not installed in this environment")
 
@@ -60,62 +60,60 @@ def test_end_to_end_cli_parquet_roundtrip_and_dbt_marts(tmp_path: Path) -> None:
     editor_xlsx = data_dir / "editor" / "masterdata_roundtrip.xlsx"
     wb = openpyxl.load_workbook(editor_xlsx)
 
-    # 3-level electricity hierarchy + estimation share + drinking water object
-    ws_obj = wb["objekte"]
-    ws_obj.append(["OBJ-CAMPUS", "Campus Hauptgebäude", "gebaeude", "Bildung", "Campus", 1, None])
-    ws_obj.append(["OBJ-WING-A", "Trakt A", "gebaeude", "Bildung", "Campus", 1, None])
-    ws_obj.append(["OBJ-CANTEEN", "Mensa", "gebaeude", "Bildung", "Verpflegung", 1, None])
-    ws_obj.append(["OBJ-GYM", "Turnhalle", "gebaeude", "Sport", "Hallen", 1, None])
+    # Mixed object classes under one main electricity meter + independent water meter:
+    #   MP-TOWN-MAIN (1000 kWh, L0, rest -> OBJ-STREETLIGHTS [public_lighting])
+    #   ├── MP-BLDG   (500 kWh, L1, rest -> OBJ-TOWNHALL [building])
+    #   │   └── MP-LIB (120 kWh, L2, measured -> OBJ-LIBRARY [building])
+    #   └── MP-SCHOOL (300 kWh, L1, measured -> OBJ-SCHOOL [school])
+    #   estimation_rules: 20% of MP-TOWN-MAIN's net rest (200 kWh) -> OBJ-EV [mobility] (40 kWh)
+    #   automatic remaining rest -> OBJ-STREETLIGHTS [public_lighting] (160 kWh)
+    #   Total = 120 + 380 + 300 + 40 + 160 = 1000.0 kWh (exact conservation!)
+    ws_obj = wb["objects"]
     ws_obj.append(
-        ["OBJ-TW-1", "Hochbehälter Nord", "trinkwasser", "Infrastruktur", "Wasser", 1, None]
+        ["OBJ-STREETLIGHTS", "Center Streetlights", "public_lighting", "Infra", "Lighting", 1, None]
+    )
+    ws_obj.append(["OBJ-TOWNHALL", "Town Hall", "building", "Admin", "Core", 1, None])
+    ws_obj.append(["OBJ-LIBRARY", "Public Library", "building", "Culture", "Libraries", 1, None])
+    ws_obj.append(["OBJ-SCHOOL", "Primary School", "school", "Education", "Schools", 1, None])
+    ws_obj.append(["OBJ-EV", "EV Charging Station", "mobility", "Infra", "Charging", 1, None])
+    ws_obj.append(
+        ["OBJ-RESERVOIR", "North Reservoir", "water_supply", "Infra", "Water", 1, None]
     )
 
-    ws_mp = wb["messpunkte"]
+    ws_mp = wb["metering_points"]
     ws_mp.append(
         [
-            "MP-CAMPUS", "OBJ-CAMPUS", "strom", "Hauptzähler", "POD-C",
-            "kWh", "smartmeter", 1, "2026-01-01", None, None,
+            "MP-TOWN-MAIN", None, "OBJ-STREETLIGHTS", "electricity", "Main Town Meter",
+            "POD-MAIN", "kWh", "smartmeter", 1, "2026-01-01", None, None,
         ]
     )
     ws_mp.append(
         [
-            "MP-WING-A", "OBJ-WING-A", "strom", "Unterzähler Trakt A", "SUB-A",
-            "kWh", "submeter", 1, "2026-01-01", None, None,
+            "MP-BLDG", "MP-TOWN-MAIN", "OBJ-TOWNHALL", "electricity", "Town Hall Sub-meter",
+            "SUB-HALL", "kWh", "submeter", 1, "2026-01-01", None, None,
         ]
     )
     ws_mp.append(
         [
-            "MP-CANTEEN", "OBJ-CANTEEN", "strom", "Unterzähler Mensa", "SUB-M",
-            "kWh", "submeter", 1, "2026-01-01", None, None,
+            "MP-LIB", "MP-BLDG", "OBJ-LIBRARY", "electricity", "Library Sub-sub-meter",
+            "SUB-LIB", "kWh", "submeter", 1, "2026-01-01", None, None,
         ]
     )
     ws_mp.append(
         [
-            "MP-TW-1", "OBJ-TW-1", "trinkwasser", "Zähler Hochbehälter", "TW-1",
-            "m3", "smartmeter", 1, "2026-01-01", None, None,
+            "MP-SCHOOL", "MP-TOWN-MAIN", "OBJ-SCHOOL", "electricity", "School Sub-meter",
+            "SUB-SCH", "kWh", "submeter", 1, "2026-01-01", None, None,
+        ]
+    )
+    ws_mp.append(
+        [
+            "MP-WATER-1", None, "OBJ-RESERVOIR", "water", "Reservoir Water Meter",
+            "W-1", "m3", "smartmeter", 1, "2026-01-01", None, None,
         ]
     )
 
-    # MP-CAMPUS (1000) - MP-WING-A (400) = 600 -> 30% OBJ-GYM (180), residual OBJ-CAMPUS (420)
-    # MP-WING-A (400)  - MP-CANTEEN (150) = residual OBJ-WING-A (250)
-    # MP-CANTEEN (150) = measured OBJ-CANTEEN (150)
-    # Sum across all objects = 420 + 180 + 250 + 150 = 1000 (zero double-counting!)
-    ws_reg = wb["hierarchie_regeln"]
-    ws_reg.append(
-        [
-            None, "MP-CAMPUS", "MP-WING-A", None, "submeter_deduction",
-            1.0, "2026-01-01", None, 1, None,
-        ]
-    )
-    ws_reg.append(
-        [
-            None, "MP-WING-A", "MP-CANTEEN", None, "submeter_deduction",
-            1.0, "2026-01-01", None, 1, None,
-        ]
-    )
-    ws_reg.append(
-        [None, "MP-CAMPUS", None, "OBJ-GYM", "estimation_factor", 0.30, "2026-01-01", None, 1, None]
-    )
+    ws_est = wb["estimation_rules"]
+    ws_est.append([None, "MP-TOWN-MAIN", "OBJ-EV", 0.20, "2026-01-01", None, 1, "20% of rest"])
     wb.save(editor_xlsx)
     wb.close()
 
@@ -124,17 +122,28 @@ def test_end_to_end_cli_parquet_roundtrip_and_dbt_marts(tmp_path: Path) -> None:
     # Write 1 full 15-min day (2026-02-10 local Europe/Rome) for all meters
     day = datetime(2026, 2, 10, 0, 0)
     rows = []
-    rows.extend(_make_full_day_rows(day, "MP-CAMPUS", "strom", "kWh", 1000.0, peak_power_kw=55.0))
-    rows.extend(_make_full_day_rows(day, "MP-WING-A", "strom", "kWh", 400.0, peak_power_kw=22.0))
-    rows.extend(_make_full_day_rows(day, "MP-CANTEEN", "strom", "kWh", 150.0, peak_power_kw=12.0))
-    rows.extend(_make_full_day_rows(day, "MP-TW-1", "trinkwasser", "m3", 48.0))
+    rows.extend(
+        _make_full_day_rows(day, "MP-TOWN-MAIN", "electricity", "kWh", 1000.0, peak_power_kw=55.0)
+    )
+    rows.extend(
+        _make_full_day_rows(day, "MP-BLDG", "electricity", "kWh", 500.0, peak_power_kw=28.0)
+    )
+    rows.extend(
+        _make_full_day_rows(day, "MP-LIB", "electricity", "kWh", 120.0, peak_power_kw=9.0)
+    )
+    rows.extend(
+        _make_full_day_rows(day, "MP-SCHOOL", "electricity", "kWh", 300.0, peak_power_kw=18.0)
+    )
+    rows.extend(_make_full_day_rows(day, "MP-WATER-1", "water", "m3", 48.0))
 
     store = ParquetMeasurementStore(data_dir / "parquet")
     store.write(pl.DataFrame(rows))
 
-    # Run dbt run & dbt test via `python -m dbt.cli.main` (portable across Windows/POSIX)
+    # Run dbt run & dbt test via `python -m dbt.cli.main`
     duckdb_path = data_dir / "test_analytics.duckdb"
-    parquet_glob = (data_dir / "parquet" / "sparte=*" / "year=*" / "*.parquet").as_posix()
+    parquet_glob = (
+        data_dir / "parquet" / "energy_carrier=*" / "year=*" / "*.parquet"
+    ).as_posix()
     sqlite_path = (data_dir / "db" / "masterdata.sqlite").as_posix()
 
     env = os.environ.copy()
@@ -171,28 +180,61 @@ def test_end_to_end_cli_parquet_roundtrip_and_dbt_marts(tmp_path: Path) -> None:
     )
     assert test_proc.returncode == 0, f"dbt test failed:\n{test_proc.stdout}\n{test_proc.stderr}"
 
-    # Verify exact multi-level residual & estimation arithmetic in mart_quarterly_consumption
+    # Verify exact multi-level mixed-class arithmetic and derived meter levels in marts
     with duckdb.connect(str(duckdb_path), read_only=True) as con:
         q_rows = con.execute(
             """
             select
-                objekt_id,
-                sparte,
+                object_id,
+                energy_carrier,
+                object_class,
                 allocation_type,
                 round(total_consumption, 4) as total_consumption
             from mart_quarterly_consumption
             where year_quarter = '2026-Q1'
-            order by sparte, objekt_id
+            order by energy_carrier, object_id
             """
         ).fetchall()
 
-    results = {(r[0], r[1]): (r[2], r[3]) for r in q_rows}
-    assert results[("OBJ-CAMPUS", "strom")] == ("residual", pytest.approx(420.0))
-    assert results[("OBJ-GYM", "strom")] == ("estimated_share", pytest.approx(180.0))
-    assert results[("OBJ-WING-A", "strom")] == ("residual", pytest.approx(250.0))
-    assert results[("OBJ-CANTEEN", "strom")] == ("measured", pytest.approx(150.0))
-    assert results[("OBJ-TW-1", "trinkwasser")] == ("measured", pytest.approx(48.0))
+        tree_rows = con.execute(
+            """
+            select metering_point_id, meter_level, is_main_meter, tree_path
+            from mart_plausibility_summary
+            where year_quarter = '2026-Q1'
+            order by tree_path
+            """
+        ).fetchall()
 
-    # Total electricity across all objects must equal gross MP-CAMPUS (1000.0)
-    strom_total = sum(val for (_, sp), (_, val) in results.items() if sp == "strom")
-    assert strom_total == pytest.approx(1000.0)
+    results = {(r[0], r[1]): (r[2], r[3], r[4]) for r in q_rows}
+    assert results[("OBJ-STREETLIGHTS", "electricity")] == (
+        "public_lighting", "residual", pytest.approx(160.0)
+    )
+    assert results[("OBJ-EV", "electricity")] == (
+        "mobility", "estimated_share", pytest.approx(40.0)
+    )
+    assert results[("OBJ-TOWNHALL", "electricity")] == (
+        "building", "residual", pytest.approx(380.0)
+    )
+    assert results[("OBJ-LIBRARY", "electricity")] == (
+        "building", "measured", pytest.approx(120.0)
+    )
+    assert results[("OBJ-SCHOOL", "electricity")] == (
+        "school", "measured", pytest.approx(300.0)
+    )
+    assert results[("OBJ-RESERVOIR", "water")] == (
+        "water_supply", "measured", pytest.approx(48.0)
+    )
+
+    # Energy conservation: all electricity allocations sum to main meter gross (1000.0)
+    electricity_total = sum(
+        val for (_, carrier), (_, _, val) in results.items() if carrier == "electricity"
+    )
+    assert electricity_total == pytest.approx(1000.0)
+
+    # Verify automatic recursive tree depth & paths
+    tree_map = {r[0]: (r[1], r[2], r[3]) for r in tree_rows}
+    assert tree_map["MP-TOWN-MAIN"] == (0, True, "MP-TOWN-MAIN")
+    assert tree_map["MP-BLDG"] == (1, False, "MP-TOWN-MAIN > MP-BLDG")
+    assert tree_map["MP-LIB"] == (2, False, "MP-TOWN-MAIN > MP-BLDG > MP-LIB")
+    assert tree_map["MP-SCHOOL"] == (1, False, "MP-TOWN-MAIN > MP-SCHOOL")
+    assert tree_map["MP-WATER-1"] == (0, True, "MP-WATER-1")

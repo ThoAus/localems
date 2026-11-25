@@ -1,6 +1,6 @@
-# em_tools — Energy Data Collection, Master-Data Roundtrip & Quarterly Reporting
+# em_tools — Energy Data Collection, Meter-Tree Master Data & Quarterly Reporting
 
-`em_tools` is an installable Python library and analytics toolset for collecting 15-minute energy and infrastructure consumption data (~35,040 intervals/year per metering point), storing it in standardized **Apache Parquet**, managing master data and allocation rules in **SQLite** via an **Excel/LibreOffice `.xlsx` roundtrip**, and producing validated quarterly reports with **dbt + DuckDB**.
+`em_tools` is an installable Python library and analytics toolset for collecting 15-minute energy and infrastructure consumption data (~35,040 intervals/year per metering point), storing it in standardized **Apache Parquet**, managing a self-describing meter tree and estimation rules in **SQLite** via an **Excel/LibreOffice `.xlsx` roundtrip**, and producing validated quarterly reports with **dbt + DuckDB**.
 
 > **Living Document:** This file defines the project task, architecture concept, data model, and operational commands. It is kept up to date as the project evolves. Chronological architectural and technical decisions are logged in [steps.md](steps.md).
 
@@ -9,39 +9,36 @@
 ## 1. Task & Requirements
 
 ### Use Case & Scope
-- **Domain:** Standardized storage and quarterly reporting of 15-minute interval energy and infrastructure data across multiple sectors (`sparte`), including:
-  - Electricity (`strom`, e.g., smart meter / grid-operator exports such as Edyna POD files)
-  - Drinking water (`trinkwasser`)
-  - Public lighting (`beleuchtung`)
-  - Buildings & sub-meters (`gebaeude`, manual counter readings, additional meters)
-- **Cadence:** No real-time requirement; primary focus is **quarterly reporting** (KPIs, multi-level hierarchy rollups, residual checks, and plausibility audits).
-- **Scale & Storage:** Local directory store (`data/parquet/`), designed for ~10–200 metering points per sector, partitioned by **`sparte` + `year`**.
-- **Timestamp Convention:** **UTC, interval start** (`timestamp[us, tz=UTC]`, e.g., `00:00:00Z` covers `00:00–00:15`). Naive local timestamps in raw files are converted using `Europe/Rome` (configurable) with DST awareness, and converted back to local reporting time in dbt quarterly models.
-- **Priorities:** Open standards, reproducible pipelines, low operational/maintenance overhead, and clean separation between raw data, master data/rules, and transformation logic.
+- **Domain:** Standardized storage and quarterly reporting of 15-minute interval data across physical energy carriers (`electricity`, `water`, `gas`, `heating`, `other`) and functional object classes (`building`, `school`, `public_lighting`, `water_supply`, `sports`, `mobility`, `other`).
+- **Decoupled Physical vs. Functional Model:** Physical subtraction compatibility is governed by `energy_carrier` + `unit` on `metering_points` and Parquet, while reporting classes (`object_class`, `level_1`, `level_2`) live strictly on `objects`. Under one electricity main meter, sub-meters can belong to a `building` and a `school` while the automatic residual ("the rest") belongs to `public_lighting`.
+- **Language Standard:** All project code, schemas, SQLite tables, Parquet columns, dbt models, CLI flags, tests, and documentation use **consistent English** identifiers. Source-specific parsers map any non-English raw provider headers (such as Italian or German export columns) into the canonical English schema at ingestion time.
+- **Cadence:** No real-time requirement; primary focus is **quarterly reporting** (KPIs, recursive meter-tree rollups, automatic residual allocation, plausibility audits, and energy conservation checks).
+- **Scale & Storage:** Local directory store (`data/parquet/`), designed for ~10–200 metering points per carrier, partitioned by **`energy_carrier` + `year`**.
+- **Timestamp Convention:** **UTC, interval start** (`timestamp[us, tz=UTC]`, e.g., `00:00:00Z` covers `00:00–00:15`). Naive local timestamps in raw files are converted using `Europe/Rome` (configurable) with DST awareness, and projected back to local reporting time in dbt quarterly models.
 
 ---
 
 ## 2. Target Architecture
 
 ```text
-+--------------------------+        +-----------------------------------+
-| Raw Input Files          |        | SQLite (Single Source of Truth)   |
-| - Edyna 15-min XLSX      |        | - Objects & groupings (ebene_1/2) |
-| - Tidy CSV / Sub-meters  |        | - Metering points (messpunkte)    |
-| - Manual readings        |        | - Hierarchy & estimation rules    |
-+------------+-------------+        |   (valid_from / valid_to)         |
-             |                      +-----------------+-----------------+
-             v                                        ^
-   [ Python: em_tools ]                               |  export-editor
++--------------------------+        +------------------------------------+
+| Raw Input Files          |        | SQLite (Single Source of Truth)    |
+| - Edyna 15-min XLSX      |        | - objects (object_class, level_1/2)|
+| - Tidy CSV / Sub-meters  |        | - metering_points (tree via        |
+| - Manual readings        |        |   parent_metering_point_id; NULL   |
++------------+-------------+        |   = main meter, unlimited depth)   |
+             |                      | - estimation_rules (valid_from/to) |
+             v                      +-----------------+------------------+
+   [ Python: em_tools ]                               ^  export-editor
    - Modular Readers (Polars)                         v  import-editor
    - UTC Normalize & Validate              [ .xlsx Roundtrip Workbook ]
    - Idempotent Parquet Write              (Excel / LibreOffice Calc;
-             |                              auto rule_id, hash/field diff,
-             v                              validation, soft-delete &
-+--------------------------+                automatic SQLite backup)
-| Standardized Parquet     |
+             |                              auto _meter_level & _tree_path,
+             v                              auto rule_id, hash/field diff,
++--------------------------+                cycle & carrier validation,
+| Standardized Parquet     |                soft-delete & DB backup)
 | data/parquet/            |
-|   sparte=<sparte>/       |
+|   energy_carrier=<name>/ |
 |     year=<YYYY>/         |
 |       measurements.parquet
 +------------+-------------+
@@ -51,38 +48,43 @@
                                  v
                   +-----------------------------+
                   | DuckDB + dbt (dbt-duckdb)   |
-                  | - staging -> intermediate   |
-                  |   -> marts (quarterly KPIs) |
-                  | - Multi-level residuals     |
-                  | - Data quality tests        |
+                  | - WITH RECURSIVE meter tree |
+                  | - Automatic residuals +     |
+                  |   estimation allocations    |
+                  | - Quarterly KPI marts       |
+                  | - DQ & conservation tests   |
                   +-----------------------------+
 ```
 
 ### A) Standardized Measurement Store (Apache Parquet via Polars + PyArrow)
-- **No small-file problem:** Measurements are bundled by **`sparte` and `year`** (`data/parquet/sparte=<sparte>/year=<YYYY>/measurements.parquet`).
-- **No rigid folder hierarchies:** Organizational levels (`ebene_1`, `ebene_2`), object categories (`gebaeude`, `trinkwasser`, `beleuchtung`), and metering points (`messpunkt_id`) are never encoded in folder paths, so reorganizations require zero data movement.
-- **Idempotent ingestion:** Natural uniqueness key `(messpunkt_id, sparte, channel, timestamp, reading_type)` deduplicates re-imported overlapping files (keeping the latest `ingested_at`).
+- **No small-file problem:** Measurements are bundled by **`energy_carrier` and `year`** (`data/parquet/energy_carrier=<carrier>/year=<YYYY>/measurements.parquet`).
+- **No rigid folder hierarchies:** Functional classes (`object_class`) and organizational groupings (`level_1`, `level_2`) live in SQLite, never in folder trees, so reclassifying assets requires zero Parquet data movement.
+- **Idempotent ingestion:** Natural uniqueness key `(metering_point_id, energy_carrier, channel, timestamp, reading_type)` deduplicates re-imported overlapping files (keeping the latest `ingested_at`).
 
-### B) Master Data, Hierarchies & Estimation Rules (SQLite + `.xlsx` Roundtrip)
+### B) Master Data Tree & Estimation Rules (SQLite + `.xlsx` Roundtrip)
 - **Single Source of Truth (`data/db/masterdata.sqlite`):**
-  - `objekte`: `objekt_id`, `name`, `objekt_typ`, `ebene_1`, `ebene_2`, `active`, `notes`
-  - `messpunkte`: `messpunkt_id`, `objekt_id`, `sparte`, `name`, `external_id`, `unit`, `meter_type`, `active`, `valid_from`, `valid_to`, `notes`
-  - `hierarchie_regeln`: `rule_id` (auto-assigned), `parent_messpunkt_id`, `child_messpunkt_id`, `target_objekt_id`, `rule_type` (`submeter_deduction` | `estimation_factor`), `factor`, `valid_from`, `valid_to`, `active`, `notes`
+  - `objects`: `object_id`, `name`, `object_class`, `level_1`, `level_2`, `active`, `notes`
+  - `metering_points`: `metering_point_id`, `parent_metering_point_id` (`NULL` = main meter; set = sub-meter of unlimited depth), `object_id` (direct owner for leaf meters, or **automatic residual owner** for parent meters), `energy_carrier`, `name`, `external_id`, `unit`, `meter_type`, `active`, `valid_from`, `valid_to`, `notes`
+  - `estimation_rules`: `rule_id` (auto-assigned), `source_metering_point_id`, `target_object_id`, `factor` `(0, 1]`, `valid_from`, `valid_to`, `active`, `notes`
 - **Roundtrip Workflow (`export_to_editor` ↔ `import_from_editor`):**
-  - Generates a formatted `.xlsx` workbook (usable in Excel and LibreOffice Calc) with dropdown validations and a hidden/managed `_row_hash` column.
-  - Leave `rule_id` empty for new rules — primary keys are assigned automatically on import.
-  - Fast unchanged detection via `_row_hash` + exact column-by-column diffing.
-  - Pre-commit validation checks foreign keys, factor bounds `(0, 1]`, overlapping estimation-factor sums `<= 1.0`, date intervals, same-sector sub-meters, and cycle detection on active sub-meter graphs.
-  - Rows removed from the spreadsheet are **soft-deleted** (`active = 0`) to preserve historical auditability and referential integrity.
+  - Exports a formatted `.xlsx` workbook (Excel & LibreOffice Calc) with dropdown validations, read-only auto-computed `_meter_level` & `_tree_path` helpers on `metering_points`, and a managed `_row_hash` column.
+  - Leave `rule_id` empty for new `estimation_rules` rows — primary keys are assigned automatically on import.
+  - Pre-commit validation checks FKs, matching `energy_carrier` & `unit` between parent and child meters (while allowing mixed `object_class` values), DFS cycle detection on `metering_points`, overlapping estimation factor sums `<= 1.0`, and date validity.
+  - Supports inserting children and parents in any row order (`PRAGMA defer_foreign_keys = ON` + topological ordering).
+  - Rows removed from the workbook are **soft-deleted** (`active = 0`) to preserve historical auditability.
   - Creates an **automatic consistent SQLite backup** in `data/db/backups/` before every commit.
 
-### C) Transformation, Residual Logic & Quarterly Reports (`dbt-duckdb`)
+### C) Recursive Tree, Automatic Residuals & Quarterly Reports (`dbt-duckdb`)
 - DuckDB attaches `masterdata.sqlite` (read-only) and queries Parquet directly.
 - **Layers (`dbt/models/`):**
-  - `staging`: `stg_measurements`, `stg_objekte`, `stg_messpunkte`, `stg_hierarchie_regeln`
-  - `intermediate`: `int_interval_measurements`, `int_messpunkt_daily`, `int_hierarchy_residuals` (multi-level direct sub-meter deduction + residual calculation without double counting), `int_object_daily_allocated`
+  - `staging`: `stg_measurements`, `stg_objects`, `stg_metering_points`, `stg_estimation_rules`
+  - `intermediate`:
+    - `int_metering_point_tree` (`WITH RECURSIVE` deriving `meter_level`, `is_main_meter`, `root_metering_point_id`, `tree_path` with unlimited depth)
+    - `int_interval_measurements`, `int_metering_point_daily`
+    - `int_hierarchy_residuals` (direct-children subtraction at every node — zero double counting — plus automatic residual calculation and negative-residual detection)
+    - `int_object_daily_allocated` (combines `measured`, `residual`, and `estimated_share` rows across mixed `object_class` targets)
   - `marts`: `mart_quarterly_consumption`, `mart_plausibility_summary`
-- **Data Quality Tests (`dbt/tests/`):** duplicate interval check, negative consumption check, negative parent residual check, estimation factor sum check, and active-day 15-minute completeness check (DST-aware: 92 / 96 / 100 intervals/day).
+- **Data Quality Tests (`dbt/tests/`):** duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, DST-aware active-day 15-minute completeness (`92 / 96 / 100`), and **per-root energy conservation** (`sum(subtree allocations) == root gross value`).
 
 ---
 
@@ -92,10 +94,10 @@
 | :--- | :--- | :--- | :--- | :--- |
 | `timestamp` | `timestamp[us, tz=UTC]` | No | Base | UTC interval start (e.g., `00:00Z` covers `00:00–00:15`). |
 | `interval_minutes` | `int16` | Yes | Base | Interval width in minutes (`15` default; `null` for irregular manual readings). |
-| `messpunkt_id` | `string` | No | Base | Stable metering point ID (e.g., POD or internal ID). |
-| `objekt_id` | `string` | Yes | Base | Optional object ID (SQLite `messpunkte.objekt_id` is authoritative in dbt). |
-| `sparte` | `string` | No | Base | Sector: `strom`, `trinkwasser`, `beleuchtung`, `waerme`, `gas`, `sonstiges`. |
-| `channel` | `string` | No | Base | Register/channel (default `verbrauch`). |
+| `metering_point_id` | `string` | No | Base | Stable metering point ID (e.g., POD or internal ID). |
+| `object_id` | `string` | Yes | Base | Optional object ID (SQLite `metering_points.object_id` is authoritative in dbt). |
+| `energy_carrier` | `string` | No | Base | Physical carrier: `electricity`, `water`, `gas`, `heating`, `other`. |
+| `channel` | `string` | No | Base | Register/channel (default `consumption`). |
 | `value` | `float64` | No | Base | Standardized consumption or measurement quantity. |
 | `unit` | `string` | No | Base | Canonical unit (`kWh`, `m3`, `kW`, …). |
 | `reading_type` | `string` | No | Base | `interval`, `cumulative`, or `instantaneous`. |
@@ -122,29 +124,31 @@ em_tools/
 │       ├── __init__.py             # Public library API
 │       ├── config.py               # Workspace paths & timezone configuration
 │       ├── schema.py               # Canonical Polars/Arrow schema & validation
-│       ├── storage.py              # Partitioned Parquet store (sparte/year) + dedup
+│       ├── storage.py              # Partitioned Parquet store (energy_carrier/year) + dedup
 │       ├── cli.py                  # `em-tools` CLI
 │       ├── db/
-│       │   ├── schema.py           # SQLite DDL (objekte, messpunkte, hierarchie_regeln)
+│       │   ├── schema.py           # SQLite DDL (objects, metering_points tree, estimation_rules)
 │       │   └── repository.py       # SQLite access & online backups
 │       ├── roundtrip/
 │       │   ├── hashing.py          # Cell normalization & deterministic row hashes
-│       │   ├── validator.py        # FK, range, overlap & DFS cycle validation
-│       │   ├── exporter.py         # export_to_editor (.xlsx)
+│       │   ├── validator.py        # FK, carrier/unit match, factor overlap & tree cycle checks
+│       │   ├── exporter.py         # export_to_editor (.xlsx + _meter_level/_tree_path helpers)
 │       │   └── importer.py         # import_from_editor (diff, soft-delete, backup, commit)
 │       └── readers/
 │           ├── base.py             # BaseReader ABC
 │           ├── registry.py         # Reader registry
 │           ├── csv_standard.py     # Generic tidy CSV reader
-│           └── edyna.py            # Edyna 15-min XLSX (GIORNO + 96 columns) reader
+│           └── edyna.py            # Edyna 15-min XLSX (date + 96 columns) reader
 ├── dbt/
 │   ├── dbt_project.yml
 │   ├── profiles.yml                # DuckDB profile attaching SQLite + reading Parquet
 │   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── marts/
-│   └── tests/
+│   │   ├── staging/                # stg_measurements, stg_objects, stg_metering_points, stg_estimation_rules
+│   │   ├── intermediate/           # int_metering_point_tree (recursive), int_hierarchy_residuals, ...
+│   │   └── marts/                  # mart_quarterly_consumption, mart_plausibility_summary
+│   └── tests/                      # 6 custom DQ & conservation SQL tests
+├── notebooks/
+│   └── em_tools_workbench.ipynb    # Interactive chapter-by-chapter workbench notebook
 └── tests/
     ├── test_storage_and_readers.py
     ├── test_roundtrip.py
@@ -194,17 +198,17 @@ em-tools readers
 # Ingest an Edyna 15-minute electricity .xlsx export
 em-tools ingest data/raw/edyna_2026_q1.xlsx --reader edyna_xlsx
 
-# Ingest a generic semicolon/decimal-comma CSV (e.g., drinking water)
-em-tools ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --decimal-comma --sparte trinkwasser --unit m3 --messpunkt-id MP-TW-01
+# Ingest a generic semicolon/decimal-comma CSV (e.g., water meter)
+em-tools ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --decimal-comma --energy-carrier water --unit m3 --metering-point-id MP-WATER-01
 ```
 
 ### 4. Run dbt Transformations, Data Quality Tests & Quarterly Reports
 
 ```powershell
-# Build staging, intermediate (residuals/allocations), and quarterly marts
+# Build staging, recursive tree & residual intermediate models, and quarterly marts
 dbt run --project-dir dbt --profiles-dir dbt
 
-# Run schema & custom data quality tests (duplicates, negatives, residuals, missing intervals)
+# Run schema & custom data quality tests (including energy conservation per root meter)
 dbt test --project-dir dbt --profiles-dir dbt
 ```
 
@@ -213,4 +217,13 @@ dbt test --project-dir dbt --profiles-dir dbt
 ```powershell
 pytest
 ruff check src tests
+```
+
+### 6. Interactive Jupyter Workbench
+
+Open [notebooks/em_tools_workbench.ipynb](notebooks/em_tools_workbench.ipynb) in VS Code or JupyterLab to run all workflows interactively (workspace setup, SQLite ↔ `.xlsx` roundtrip, per-format Parquet ingestion, Parquet/DuckDB inspection, `dbt run` / `dbt test`, quarterly mart queries, and an optional mixed-class sandbox demo generator).
+
+```powershell
+# Optional: install JupyterLab / ipykernel support
+pip install -e ".[analytics,dev,notebook]"
 ```

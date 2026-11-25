@@ -18,7 +18,7 @@ QUARTER_HOUR_SLOTS: tuple[str, ...] = tuple(
 )
 
 
-def _parse_giorno(val: Any) -> date:
+def _parse_date_cell(val: Any) -> date:
     if isinstance(val, datetime):
         return val.date()
     if isinstance(val, date):
@@ -48,26 +48,26 @@ def _parse_float(val: Any) -> float | None:
 class EdynaXlsxReader(BaseReader):
     """Reads Edyna smart-meter Excel exports where the sheet name is the POD identifier.
 
-    Expected layout (wide format):
-      - First sheet name = POD (`messpunkt_id`, unless overridden via kwarg)
-      - Column 1 (`GIORNO`): date (`YYYYMMDD`, `dd/mm/yyyy`, or Excel date)
+    Expected raw file layout (wide format):
+      - First sheet name = POD (`metering_point_id`, unless overridden via kwarg)
+      - Column 1 (provider header `GIORNO`): date (`YYYYMMDD`, `dd/mm/yyyy`, or Excel date)
       - Next 96 columns: 15-minute interval values (`0000` .. `2345`)
       - Optional trailing summary columns (ignored beyond the 96 interval columns)
     """
 
     name = "edyna_xlsx"
-    description = "Edyna 15-minute electricity .xlsx export (GIORNO + 96 quarter-hour columns)."
+    description = "Edyna 15-minute electricity .xlsx export (date + 96 quarter-hour columns)."
 
     def read(
         self,
         path: Path | str,
         *,
         default_timezone: str = "Europe/Rome",
-        sparte: str = "strom",
+        energy_carrier: str = "electricity",
         unit: str = "kWh",
-        channel: str = "verbrauch",
-        messpunkt_id: str | None = None,
-        objekt_id: str | None = None,
+        channel: str = "consumption",
+        metering_point_id: str | None = None,
+        object_id: str | None = None,
         source: str | None = None,
         **_: Any,
     ) -> pl.DataFrame:
@@ -76,14 +76,14 @@ class EdynaXlsxReader(BaseReader):
         try:
             sheet_name = wb.sheetnames[0]
             ws = wb[sheet_name]
-            pod = (messpunkt_id or sheet_name).strip()
+            pod = (metering_point_id or sheet_name).strip()
 
             rows_iter = ws.iter_rows(values_only=True)
             header = next(rows_iter, None)
             if header is None or len(header) < 97:
                 raise ValueError(
                     f"Edyna file '{file_path.name}' must have at least 97 columns "
-                    f"(GIORNO + 96 15-minute intervals)."
+                    f"(date column + 96 15-minute intervals)."
                 )
 
             records: list[dict[str, Any]] = []
@@ -92,7 +92,7 @@ class EdynaXlsxReader(BaseReader):
             for raw_row in rows_iter:
                 if not raw_row or raw_row[0] is None:
                     continue
-                day = _parse_giorno(raw_row[0])
+                day = _parse_date_cell(raw_row[0])
                 interval_vals = raw_row[1:97]
                 for slot, raw_val in zip(QUARTER_HOUR_SLOTS, interval_vals, strict=False):
                     num = _parse_float(raw_val)
@@ -101,14 +101,13 @@ class EdynaXlsxReader(BaseReader):
                     hour = int(slot[:2])
                     minute = int(slot[2:])
                     ts_local = datetime(day.year, day.month, day.day, hour, minute)
-                    # Estimate 15-min average/peak power proxy only if not explicitly provided
                     records.append(
                         {
                             "timestamp": ts_local,
                             "interval_minutes": 15,
-                            "messpunkt_id": pod,
-                            "objekt_id": objekt_id,
-                            "sparte": sparte,
+                            "metering_point_id": pod,
+                            "object_id": object_id,
+                            "energy_carrier": energy_carrier,
                             "channel": channel,
                             "value": num,
                             "unit": unit,

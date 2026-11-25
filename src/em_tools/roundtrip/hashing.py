@@ -14,7 +14,7 @@ HASH_COLUMN = "_row_hash"
 INT_COLUMNS = frozenset({"rule_id", "active"})
 FLOAT_COLUMNS = frozenset({"factor"})
 DATE_COLUMNS = frozenset({"valid_from", "valid_to"})
-LOWER_ENUM_COLUMNS = frozenset({"objekt_typ", "sparte", "meter_type", "rule_type"})
+LOWER_ENUM_COLUMNS = frozenset({"object_class", "energy_carrier", "meter_type"})
 
 
 def normalize_cell(column: str, value: Any) -> Any:
@@ -27,9 +27,9 @@ def normalize_cell(column: str, value: Any) -> Any:
         if cleaned == "":
             return None
         if column in INT_COLUMNS:
-            if cleaned.lower() in {"true", "yes", "ja"}:
+            if cleaned.lower() in {"true", "yes"}:
                 return 1
-            if cleaned.lower() in {"false", "no", "nein"}:
+            if cleaned.lower() in {"false", "no"}:
                 return 0
             try:
                 num = float(cleaned)
@@ -78,8 +78,6 @@ def normalize_row(table: str, raw_row: dict[str, Any]) -> dict[str, Any]:
         val = normalize_cell(col, raw_row.get(col))
         if col == "active" and val is None:
             val = 1
-        if col == "factor" and table == "hierarchie_regeln" and val is None:
-            val = 1.0
         normalized[col] = val
     return normalized
 

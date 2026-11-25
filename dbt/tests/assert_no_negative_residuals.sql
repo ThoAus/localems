@@ -1,7 +1,7 @@
 -- Fails if sub-meter deductions exceed parent meter consumption on any day
 select
-    messpunkt_id,
-    sparte,
+    metering_point_id,
+    energy_carrier,
     channel,
     local_date,
     gross_value,

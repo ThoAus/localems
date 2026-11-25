@@ -29,50 +29,59 @@ This file records all important architectural, technical, and organizational dec
 
 ## Canonical Long-Format Measurement Schema
 - **Date:** 2026-11-24
-- **Status:** Superseded (see *Canonical Schema with Base and Sector-Specific Fields*, 2026-11-25)
-- **Description:** Initial proposal for a generic long-format measurement table (`timestamp`, `interval_end`, `meter_id`, `channel`, `value`, `unit`, `reading_type`, `quality`, `source`, `ingested_at`). Refined on 2026-11-25 to incorporate 15-minute domain fields (`messpunkt_id`, `objekt_id`, `sparte`, `interval_minutes`) and nullable sector-specific columns.
+- **Status:** Superseded (see *Canonical Schema with Base and Carrier-Specific Fields*, 2026-11-25)
+- **Description:** Initial proposal for a generic long-format measurement table (`timestamp`, `interval_end`, `meter_id`, `channel`, `value`, `unit`, `reading_type`, `quality`, `source`, `ingested_at`).
 
 ## Partitioned Parquet Storage with Idempotent Ingestion
 - **Date:** 2026-11-24
-- **Status:** Superseded (see *Parquet Partitioning by Sector and Time*, 2026-11-25)
-- **Description:** Initial proposal to partition Parquet files by `meter_id=<id>/year=<YYYY>/`. Superseded on 2026-11-25 to avoid small-file proliferation and rigid per-meter directory structures.
+- **Status:** Superseded (see *Parquet Partitioning by Energy Carrier and Year*, 2026-11-25)
+- **Description:** Initial proposal to partition Parquet files by `meter_id=<id>/year=<YYYY>/`. Superseded to avoid small-file proliferation and rigid per-meter directory structures.
 
 ## Data Processing Engine Selection (`polars` + `pyarrow`)
 - **Date:** 2026-11-25
 - **Status:** Decided
 - **Description:** Selected `polars` paired with `pyarrow` as the Python data processing and Parquet engine for faster execution, strict typing, native Arrow/Parquet support, and lower memory footprint compared to `pandas`.
 
-## Quarterly 15-Minute Reporting Scope and Multi-Sector Domain
+## Quarterly 15-Minute Reporting Scope and Multi-Carrier Domain
 - **Date:** 2026-11-25
 - **Status:** Decided
-- **Description:** Integrated project handoff: primary focus is standardized storage and quarterly reporting of 15-minute interval data (~35,040 intervals/year per metering point) across buildings and infrastructure sectors (`strom`, `trinkwasser`, `beleuchtung`, `gebaeude`), with no real-time requirement. Priorities are open standards, reproducible pipelines, low maintenance effort, and clean separation of raw data, metadata/rules, and transformation logic.
+- **Description:** Integrated project handoff: primary focus is standardized storage and quarterly reporting of 15-minute interval data (~35,040 intervals/year per metering point) across municipal buildings and infrastructure, with no real-time requirement. Priorities are open standards, reproducible pipelines, low maintenance effort, and clean separation of raw data, metadata/rules, and transformation logic.
 
-## Parquet Partitioning by Sector and Year (Local Store, No Rigid Folder Hierarchy)
+## Parquet Partitioning by Energy Carrier and Year (Local Store, No Rigid Folder Hierarchy)
 - **Date:** 2026-11-25
 - **Status:** Decided
-- **Description:** Supersedes per-meter partitioning. Measurements are stored in a local directory (`data/parquet/`) designed for ~10–200 metering points per sector, bundled into Apache Parquet files partitioned by `sparte=<sparte>/year=<YYYY>/measurements.parquet`. Organizational groupings (`ebene_1`, `ebene_2`), object types (`gebaeude`, `trinkwasser`, `beleuchtung`), and metering points (`messpunkt_id`) are never encoded in folder paths so reorganizations do not require moving Parquet files.
+- **Description:** Measurements are stored locally under `data/parquet/` (~10–200 metering points per carrier) and partitioned by `energy_carrier=<carrier>/year=<YYYY>/measurements.parquet` (`electricity`, `water`, `gas`, `heating`, `other`). Functional classes (`object_class`) and organizational levels (`level_1`, `level_2`) are never encoded in folder paths so reorganizing or reclassifying assets requires zero Parquet data movement.
 
 ## Timestamp Convention (UTC, Interval Start)
 - **Date:** 2026-11-25
 - **Status:** Decided
 - **Description:** Store all Parquet timestamps as UTC interval start (`timestamp[us, tz=UTC]`, e.g., `00:00:00Z` covers `00:00–00:15`). Naive local timestamps from raw input files (e.g., Edyna exports in `Europe/Rome`) are converted cleanly to UTC during ingestion with DST awareness, and projected back into the local reporting timezone (`Europe/Rome`) in dbt models for calendar-accurate quarterly rollups.
 
-## Canonical Schema with Base and Sector-Specific Fields
+## Canonical Schema with Base and Carrier-Specific Fields
 - **Date:** 2026-11-25
 - **Status:** Decided
-- **Description:** Supersedes the initial generic schema. Parquet measurements combine standardized base fields (`timestamp`, `interval_minutes`, `messpunkt_id`, `objekt_id`, `sparte`, `channel`, `value`, `unit`, `reading_type`, `quality`, `source`, `ingested_at`) with nullable sector-specific fields (`peak_power_kw` for electricity, `flow_rate`/`pressure_bar` for drinking water, `burn_duration_min` for public lighting). Deduplication uses `(messpunkt_id, sparte, channel, timestamp, reading_type)`.
+- **Description:** Parquet measurements combine standardized base fields (`timestamp`, `interval_minutes`, `metering_point_id`, `object_id`, `energy_carrier`, `channel`, `value`, `unit`, `reading_type`, `quality`, `source`, `ingested_at`) with nullable carrier-specific fields (`peak_power_kw` for electricity, `flow_rate`/`pressure_bar` for water, `burn_duration_min` for lighting). Deduplication uses `(metering_point_id, energy_carrier, channel, timestamp, reading_type)`.
 
-## SQLite Single Source of Truth for Master Data, Hierarchies, and Rules
+## SQLite Single Source of Truth with General Edge Table (`hierarchy_rules`)
 - **Date:** 2026-11-25
-- **Status:** Decided
-- **Description:** Store metering point master data (`messpunkte`), two-level organizational hierarchies (`objekte` with `ebene_1`, `ebene_2`), and multi-level sub-meter/estimation rules (`hierarchie_regeln`) in a local SQLite database (`data/db/masterdata.sqlite`). Hierarchies and allocation rules use a time-bounded edge table (`rule_id`, `parent_messpunkt_id`, `child_messpunkt_id`, `target_objekt_id`, `rule_type`, `factor`, `valid_from`, `valid_to`, `active`), enabling multi-level parent residual calculations without double counting and negative-residual checks.
+- **Status:** Superseded (see *Self-Describing Meter Tree, Decoupled Object Classes, and Estimation Rules*, 2026-11-25)
+- **Description:** Initial SQLite model separating sub-meter links into a general `hierarchy_rules` edge table alongside `sector` on meters. Superseded once confirmed that meters never change parent under the same ID, every sub-meter feeds from one parent, and mixed functional classes (e.g., building, school, public lighting) can coexist under a single electricity main meter.
 
-## Spreadsheet Roundtrip Workflow (`.xlsx`) with Soft-Delete, Validation, and Backups
+## Strict English-Only Naming Across Code, Schemas, Database, and Docs
 - **Date:** 2026-11-25
 - **Status:** Decided
-- **Description:** Implemented `export_to_editor` and `import_from_editor` in Python (`openpyxl`) using `.xlsx` as the everyday editor format (compatible with both Excel and LibreOffice Calc). New `hierarchie_regeln` rows leave `rule_id` empty and receive auto-assigned primary keys upon import. Imports perform deterministic `_row_hash` fast-path checks, column-by-column diffing, full target-state validation (FKs, factor bounds, overlapping estimation sums <= 1.0, date ranges, same-sector sub-meters, DFS cycle detection), **soft-delete (`active = 0`)** for rows removed from the workbook, and an automatic online SQLite backup before committing atomically.
+- **Description:** Standardized the entire repository to consistent English across all SQLite tables, columns, enum values, Parquet partition keys, dbt models, CLI flags, tests, notebooks, and documentation. Non-English raw provider file headers (e.g., Italian or German utility exports) are mapped into the canonical English schema strictly inside their dedicated reader modules.
 
-## Analytics, Residual Logic, and Quarterly Reports with `dbt-duckdb`
+## Interactive Chapter-Based Jupyter Workbench Notebook
 - **Date:** 2026-11-25
 - **Status:** Decided
-- **Description:** Implemented a `dbt-duckdb` analytics project under `dbt/` attaching `masterdata.sqlite` (read-only via DuckDB's `sqlite` extension) and reading Parquet measurements directly. Models follow `staging` (`stg_*`) -> `intermediate` (`int_interval_measurements`, `int_messpunkt_daily`, `int_hierarchy_residuals`, `int_object_daily_allocated`) -> `marts` (`mart_quarterly_consumption`, `mart_plausibility_summary`), paired with generic schema tests and 5 custom SQL data quality tests (duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, and DST-aware active-day 15-minute interval completeness).
+- **Description:** Added `notebooks/em_tools_workbench.ipynb` grouping all operational workflows into documented chapters (Workspace Setup, SQLite ↔ `.xlsx` Master-Data Roundtrip, Per-Format Parquet Ingestion, Parquet/DuckDB Querying, `dbt-duckdb` Models & Quality Tests, and an optional isolated Demo Generator) alongside an optional `[notebook]` dependency extra in `pyproject.toml`.
+
+## Self-Describing Meter Tree, Decoupled Object Classes, and Estimation Rules
+- **Date:** 2026-11-25
+- **Status:** Decided
+- **Description:** Simplified the master-data model to match real-world constraints (immutable meter IDs, single-parent sub-meters, automatic residual calculation, mixed asset classes under one parent, and time-bounded percentage estimates):
+  1. **Decoupled `energy_carrier` vs. `object_class`:** Physical medium (`electricity`, `water`, `gas`, `heating`, `other`) + `unit` live on `metering_points` and Parquet partitions; functional classes (`building`, `school`, `public_lighting`, `water_supply`, `sports`, `mobility`, `other`) live on `objects`. Parent and child meters must match on `energy_carrier` and `unit`, while their objects can belong to any class.
+  2. **Meter Tree on `metering_points`:** Added self-referencing `parent_metering_point_id` (`NULL` = main meter, level 0; set = sub-meter of unlimited depth). Each meter's `object_id` automatically receives its measured value (for leaf meters) or its automatic residual ("the rest" after subtracting direct children and estimation shares). `.xlsx` exports automatically compute read-only `_meter_level` and `_tree_path` columns; imports validate tree cycles and carrier/unit parity, support parent/child insertion in any row order, soft-delete removed rows (`active = 0`), and back up SQLite before commit.
+  3. **Lightweight `estimation_rules` Table:** Dedicated table (`rule_id` auto-assigned, `source_metering_point_id`, `target_object_id`, `factor`, `valid_from`, `valid_to`, `active`) for percentage splits on a meter's net rest.
+  4. **Recursive dbt Tree & Energy Conservation Test:** Added `int_metering_point_tree` (`WITH RECURSIVE` deriving `meter_level`, `is_main_meter`, `root_metering_point_id`, `tree_path`) and `assert_energy_conservation_per_root` verifying that every root meter's gross energy equals the sum of all allocations across its subtree.

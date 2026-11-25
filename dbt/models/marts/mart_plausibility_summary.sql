@@ -2,20 +2,25 @@ with residuals as (
     select * from {{ ref('int_hierarchy_residuals') }}
 ),
 
-objekte as (
-    select * from {{ ref('stg_objekte') }}
+objects as (
+    select * from {{ ref('stg_objects') }}
 )
 
 select
     r.report_year,
     r.report_quarter,
     r.year_quarter,
-    r.sparte,
-    r.messpunkt_id,
-    r.objekt_id,
-    o.objekt_name,
-    o.ebene_1,
-    o.ebene_2,
+    r.energy_carrier,
+    r.metering_point_id,
+    r.meter_level,
+    r.is_main_meter,
+    r.root_metering_point_id,
+    r.tree_path,
+    r.object_id,
+    o.object_name,
+    o.object_class,
+    o.level_1,
+    o.level_2,
     r.channel,
     r.unit,
     count(distinct r.local_date) as active_days,
@@ -32,22 +37,27 @@ select
     sum(r.residual_value) as total_residual_value,
     max(r.max_peak_power_kw) as max_peak_power_kw
 from residuals r
-left join objekte o
-    on r.objekt_id = o.objekt_id
+left join objects o
+    on r.object_id = o.object_id
 group by
     r.report_year,
     r.report_quarter,
     r.year_quarter,
-    r.sparte,
-    r.messpunkt_id,
-    r.objekt_id,
-    o.objekt_name,
-    o.ebene_1,
-    o.ebene_2,
+    r.energy_carrier,
+    r.metering_point_id,
+    r.meter_level,
+    r.is_main_meter,
+    r.root_metering_point_id,
+    r.tree_path,
+    r.object_id,
+    o.object_name,
+    o.object_class,
+    o.level_1,
+    o.level_2,
     r.channel,
     r.unit
 order by
     r.report_year,
     r.report_quarter,
-    r.sparte,
-    r.messpunkt_id
+    r.energy_carrier,
+    r.tree_path

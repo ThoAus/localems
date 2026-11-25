@@ -7,17 +7,15 @@ from datetime import UTC, datetime
 import polars as pl
 import pyarrow as pa
 
-ALLOWED_SPARTEN = frozenset(
-    {"strom", "trinkwasser", "beleuchtung", "waerme", "gas", "sonstiges"}
-)
+ALLOWED_ENERGY_CARRIERS = frozenset({"electricity", "water", "gas", "heating", "other"})
 ALLOWED_READING_TYPES = frozenset({"interval", "cumulative", "instantaneous"})
 ALLOWED_QUALITIES = frozenset(
     {"measured", "manual", "estimated", "interpolated", "suspect"}
 )
 
 DEDUP_KEY_COLUMNS: tuple[str, ...] = (
-    "messpunkt_id",
-    "sparte",
+    "metering_point_id",
+    "energy_carrier",
     "channel",
     "timestamp",
     "reading_type",
@@ -26,9 +24,9 @@ DEDUP_KEY_COLUMNS: tuple[str, ...] = (
 MEASUREMENT_POLARS_SCHEMA: dict[str, pl.DataType] = {
     "timestamp": pl.Datetime("us", "UTC"),
     "interval_minutes": pl.Int16,
-    "messpunkt_id": pl.String,
-    "objekt_id": pl.String,
-    "sparte": pl.String,
+    "metering_point_id": pl.String,
+    "object_id": pl.String,
+    "energy_carrier": pl.String,
     "channel": pl.String,
     "value": pl.Float64,
     "unit": pl.String,
@@ -46,9 +44,9 @@ MEASUREMENT_ARROW_SCHEMA: pa.Schema = pa.schema(
     [
         pa.field("timestamp", pa.timestamp("us", tz="UTC"), nullable=False),
         pa.field("interval_minutes", pa.int16(), nullable=True),
-        pa.field("messpunkt_id", pa.string(), nullable=False),
-        pa.field("objekt_id", pa.string(), nullable=True),
-        pa.field("sparte", pa.string(), nullable=False),
+        pa.field("metering_point_id", pa.string(), nullable=False),
+        pa.field("object_id", pa.string(), nullable=True),
+        pa.field("energy_carrier", pa.string(), nullable=False),
         pa.field("channel", pa.string(), nullable=False),
         pa.field("value", pa.float64(), nullable=False),
         pa.field("unit", pa.string(), nullable=False),
@@ -65,8 +63,8 @@ MEASUREMENT_ARROW_SCHEMA: pa.Schema = pa.schema(
 
 REQUIRED_NON_NULL_COLUMNS: tuple[str, ...] = (
     "timestamp",
-    "messpunkt_id",
-    "sparte",
+    "metering_point_id",
+    "energy_carrier",
     "channel",
     "value",
     "unit",
@@ -78,7 +76,7 @@ REQUIRED_NON_NULL_COLUMNS: tuple[str, ...] = (
 
 OPTIONAL_NULLABLE_COLUMNS: tuple[str, ...] = (
     "interval_minutes",
-    "objekt_id",
+    "object_id",
     "peak_power_kw",
     "flow_rate",
     "pressure_bar",
@@ -114,7 +112,7 @@ def normalize_measurements(
             pl.lit(now_utc).cast(pl.Datetime("us", "UTC")).alias("ingested_at")
         )
     if "channel" not in work.columns:
-        work = work.with_columns(pl.lit("verbrauch").alias("channel"))
+        work = work.with_columns(pl.lit("consumption").alias("channel"))
     if "reading_type" not in work.columns:
         work = work.with_columns(pl.lit("interval").alias("reading_type"))
     if "quality" not in work.columns:
@@ -176,12 +174,12 @@ def normalize_measurements(
     ]
     work = work.select(cast_exprs)
 
-    # Lowercase enum columns for consistency
+    # Normalize enum & identifier strings
     work = work.with_columns(
-        pl.col("sparte").str.strip_chars().str.to_lowercase(),
+        pl.col("energy_carrier").str.strip_chars().str.to_lowercase(),
         pl.col("reading_type").str.strip_chars().str.to_lowercase(),
         pl.col("quality").str.strip_chars().str.to_lowercase(),
-        pl.col("messpunkt_id").str.strip_chars(),
+        pl.col("metering_point_id").str.strip_chars(),
     )
 
     validate_measurements(work)
@@ -203,11 +201,11 @@ def validate_measurements(df: pl.DataFrame) -> None:
                 f"Required column '{col}' contains {null_count} null value(s)."
             )
 
-    invalid_sparten = set(df["sparte"].unique().to_list()) - ALLOWED_SPARTEN
-    if invalid_sparten:
+    invalid_carriers = set(df["energy_carrier"].unique().to_list()) - ALLOWED_ENERGY_CARRIERS
+    if invalid_carriers:
         raise SchemaValidationError(
-            f"Invalid sparte value(s): {sorted(invalid_sparten)}. "
-            f"Allowed: {sorted(ALLOWED_SPARTEN)}"
+            f"Invalid energy_carrier value(s): {sorted(invalid_carriers)}. "
+            f"Allowed: {sorted(ALLOWED_ENERGY_CARRIERS)}"
         )
 
     invalid_rtypes = set(df["reading_type"].unique().to_list()) - ALLOWED_READING_TYPES

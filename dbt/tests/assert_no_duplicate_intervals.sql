@@ -1,7 +1,7 @@
 -- Fails if duplicate natural keys exist in Parquet measurements
 select
-    messpunkt_id,
-    sparte,
+    metering_point_id,
+    energy_carrier,
     channel,
     timestamp_utc,
     reading_type,

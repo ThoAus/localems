@@ -4,12 +4,12 @@ with measurements as (
     where reading_type = 'interval'
 ),
 
-messpunkte as (
-    select * from {{ ref('stg_messpunkte') }}
+meter_tree as (
+    select * from {{ ref('int_metering_point_tree') }}
 ),
 
-objekte as (
-    select * from {{ ref('stg_objekte') }}
+objects as (
+    select * from {{ ref('stg_objects') }}
 )
 
 select
@@ -20,9 +20,14 @@ select
     m.report_quarter,
     m.year_quarter,
     m.interval_minutes,
-    m.messpunkt_id,
-    coalesce(mp.objekt_id, m.raw_objekt_id) as objekt_id,
-    m.sparte,
+    m.metering_point_id,
+    mt.parent_metering_point_id,
+    coalesce(mt.root_metering_point_id, m.metering_point_id) as root_metering_point_id,
+    coalesce(mt.meter_level, 0) as meter_level,
+    coalesce(mt.is_main_meter, true) as is_main_meter,
+    coalesce(mt.tree_path, m.metering_point_id) as tree_path,
+    coalesce(mt.object_id, m.raw_object_id) as object_id,
+    m.energy_carrier,
     m.channel,
     m.value,
     m.unit,
@@ -32,12 +37,12 @@ select
     m.pressure_bar,
     m.burn_duration_min,
     m.source,
-    o.objekt_name,
-    o.objekt_typ,
-    o.ebene_1,
-    o.ebene_2
+    o.object_name,
+    o.object_class,
+    o.level_1,
+    o.level_2
 from measurements m
-left join messpunkte mp
-    on m.messpunkt_id = mp.messpunkt_id
-left join objekte o
-    on coalesce(mp.objekt_id, m.raw_objekt_id) = o.objekt_id
+left join meter_tree mt
+    on m.metering_point_id = mt.metering_point_id
+left join objects o
+    on coalesce(mt.object_id, m.raw_object_id) = o.object_id

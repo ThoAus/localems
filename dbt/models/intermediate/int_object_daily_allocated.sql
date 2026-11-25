@@ -4,24 +4,25 @@ with residuals as (
 
 estimation_rules as (
     select *
-    from {{ ref('stg_hierarchie_regeln') }}
+    from {{ ref('stg_estimation_rules') }}
     where is_active = true
-      and rule_type = 'estimation_factor'
 ),
 
+-- Leaf meters emit 'measured'; parent meters (or meters with estimation splits) automatically emit 'residual'
 direct_or_residual as (
     select
         local_date,
         report_year,
         report_quarter,
         year_quarter,
-        sparte,
+        energy_carrier,
         channel,
         unit,
-        objekt_id,
-        messpunkt_id as source_messpunkt_id,
+        object_id,
+        metering_point_id as source_metering_point_id,
+        root_metering_point_id,
         case
-            when submeter_deduction_value > 0 or estimation_factor_sum > 0 then 'residual'
+            when direct_child_count > 0 or estimation_factor_sum > 0 then 'residual'
             else 'measured'
         end as allocation_type,
         residual_value as allocated_value,
@@ -39,11 +40,12 @@ estimated_allocations as (
         res.report_year,
         res.report_quarter,
         res.year_quarter,
-        res.sparte,
+        res.energy_carrier,
         res.channel,
         res.unit,
-        r.target_objekt_id as objekt_id,
-        res.messpunkt_id as source_messpunkt_id,
+        r.target_object_id as object_id,
+        res.metering_point_id as source_metering_point_id,
+        res.root_metering_point_id,
         'estimated_share' as allocation_type,
         res.net_after_submeters * r.factor as allocated_value,
         res.interval_count,
@@ -53,7 +55,7 @@ estimated_allocations as (
         cast(null as double) as total_burn_duration_min
     from residuals res
     inner join estimation_rules r
-        on r.parent_messpunkt_id = res.messpunkt_id
+        on r.source_metering_point_id = res.metering_point_id
        and res.local_date between r.valid_from and r.valid_to_effective
 )
 

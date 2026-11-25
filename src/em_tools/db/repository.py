@@ -11,19 +11,20 @@ from typing import Any
 from em_tools.db.schema import connect_sqlite, init_database
 
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
-    "objekte": (
-        "objekt_id",
+    "objects": (
+        "object_id",
         "name",
-        "objekt_typ",
-        "ebene_1",
-        "ebene_2",
+        "object_class",
+        "level_1",
+        "level_2",
         "active",
         "notes",
     ),
-    "messpunkte": (
-        "messpunkt_id",
-        "objekt_id",
-        "sparte",
+    "metering_points": (
+        "metering_point_id",
+        "parent_metering_point_id",
+        "object_id",
+        "energy_carrier",
         "name",
         "external_id",
         "unit",
@@ -33,12 +34,10 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "valid_to",
         "notes",
     ),
-    "hierarchie_regeln": (
+    "estimation_rules": (
         "rule_id",
-        "parent_messpunkt_id",
-        "child_messpunkt_id",
-        "target_objekt_id",
-        "rule_type",
+        "source_metering_point_id",
+        "target_object_id",
         "factor",
         "valid_from",
         "valid_to",
@@ -48,9 +47,9 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
 }
 
 PRIMARY_KEYS: dict[str, str] = {
-    "objekte": "objekt_id",
-    "messpunkte": "messpunkt_id",
-    "hierarchie_regeln": "rule_id",
+    "objects": "object_id",
+    "metering_points": "metering_point_id",
+    "estimation_rules": "rule_id",
 }
 
 

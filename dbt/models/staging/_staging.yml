@@ -6,14 +6,14 @@ models:
     columns:
       - name: timestamp_utc
         tests: [not_null]
-      - name: messpunkt_id
+      - name: metering_point_id
         tests: [not_null]
-      - name: sparte
+      - name: energy_carrier
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["strom", "trinkwasser", "beleuchtung", "waerme", "gas", "sonstiges"]
+                values: ["electricity", "water", "gas", "heating", "other"]
       - name: reading_type
         tests:
           - not_null
@@ -21,46 +21,53 @@ models:
               arguments:
                 values: ["interval", "cumulative", "instantaneous"]
 
-  - name: stg_objekte
-    description: "Objects and two-level organizational groupings from SQLite."
+  - name: stg_objects
+    description: "Objects with functional object_class and two-level organizational groupings from SQLite."
     columns:
-      - name: objekt_id
+      - name: object_id
         tests: [not_null, unique]
-      - name: objekt_typ
+      - name: object_class
         tests:
           - not_null
           - accepted_values:
               arguments:
-                values: ["gebaeude", "trinkwasser", "beleuchtung", "sonstiges"]
+                values: ["building", "school", "public_lighting", "water_supply", "sports", "mobility", "other"]
 
-  - name: stg_messpunkte
-    description: "Metering point master data from SQLite."
+  - name: stg_metering_points
+    description: "Self-describing metering point tree (parent_metering_point_id = NULL for main meters) from SQLite."
     columns:
-      - name: messpunkt_id
+      - name: metering_point_id
         tests: [not_null, unique]
-      - name: objekt_id
+      - name: object_id
         tests:
           - not_null
           - relationships:
               arguments:
-                to: ref('stg_objekte')
-                field: objekt_id
+                to: ref('stg_objects')
+                field: object_id
+      - name: energy_carrier
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["electricity", "water", "gas", "heating", "other"]
 
-  - name: stg_hierarchie_regeln
-    description: "Time-bounded sub-meter deduction and estimation factor rules from SQLite."
+  - name: stg_estimation_rules
+    description: "Time-bounded percentage allocation rules for splitting residual consumption across unmetered objects."
     columns:
       - name: rule_id
         tests: [not_null, unique]
-      - name: parent_messpunkt_id
+      - name: source_metering_point_id
         tests:
           - not_null
           - relationships:
               arguments:
-                to: ref('stg_messpunkte')
-                field: messpunkt_id
-      - name: rule_type
+                to: ref('stg_metering_points')
+                field: metering_point_id
+      - name: target_object_id
         tests:
           - not_null
-          - accepted_values:
+          - relationships:
               arguments:
-                values: ["submeter_deduction", "estimation_factor"]
+                to: ref('stg_objects')
+                field: object_id

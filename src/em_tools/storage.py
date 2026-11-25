@@ -28,10 +28,10 @@ class WriteSummary:
 
 
 class ParquetMeasurementStore:
-    """Reads and writes canonical measurements partitioned by `sparte` and `year`.
+    """Reads and writes canonical measurements partitioned by `energy_carrier` and `year`.
 
     Layout:
-        <base_dir>/sparte=<sparte>/year=<YYYY>/measurements.parquet
+        <base_dir>/energy_carrier=<energy_carrier>/year=<YYYY>/measurements.parquet
     """
 
     def __init__(
@@ -45,8 +45,13 @@ class ParquetMeasurementStore:
         self.compression = compression
         self.default_timezone = default_timezone
 
-    def partition_path(self, sparte: str, year: int) -> Path:
-        return self.base_dir / f"sparte={sparte}" / f"year={year}" / "measurements.parquet"
+    def partition_path(self, energy_carrier: str, year: int) -> Path:
+        return (
+            self.base_dir
+            / f"energy_carrier={energy_carrier}"
+            / f"year={year}"
+            / "measurements.parquet"
+        )
 
     def write(self, df: pl.DataFrame) -> WriteSummary:
         """Normalize, deduplicate, and atomically upsert measurements into Parquet partitions."""
@@ -65,17 +70,17 @@ class ParquetMeasurementStore:
             pl.col("timestamp").dt.year().alias("_partition_year")
         )
         partitions = with_year.partition_by(
-            ["sparte", "_partition_year"], as_dict=True, maintain_order=False
+            ["energy_carrier", "_partition_year"], as_dict=True, maintain_order=False
         )
 
         written_files: list[Path] = []
         total_stored = 0
 
-        for (sparte_val, year_val), part_df in partitions.items():
-            sparte = str(sparte_val)
+        for (carrier_val, year_val), part_df in partitions.items():
+            energy_carrier = str(carrier_val)
             year = int(year_val)
             incoming = part_df.drop("_partition_year")
-            target = self.partition_path(sparte, year)
+            target = self.partition_path(energy_carrier, year)
             target.parent.mkdir(parents=True, exist_ok=True)
 
             if target.exists():
@@ -88,7 +93,7 @@ class ParquetMeasurementStore:
             deduped = (
                 combined.sort("ingested_at")
                 .unique(subset=list(DEDUP_KEY_COLUMNS), keep="last")
-                .sort(["messpunkt_id", "channel", "timestamp"])
+                .sort(["metering_point_id", "channel", "timestamp"])
             )
 
             arrow_table = deduped.to_arrow().cast(MEASUREMENT_ARROW_SCHEMA)
@@ -114,9 +119,9 @@ class ParquetMeasurementStore:
     def read(
         self,
         *,
-        sparte: str | None = None,
+        energy_carrier: str | None = None,
         year: int | None = None,
-        messpunkt_ids: list[str] | None = None,
+        metering_point_ids: list[str] | None = None,
         start_utc: datetime | None = None,
         end_utc: datetime | None = None,
     ) -> pl.DataFrame:
@@ -124,25 +129,31 @@ class ParquetMeasurementStore:
         if not self.base_dir.exists():
             return pl.DataFrame(schema=MEASUREMENT_POLARS_SCHEMA)
 
-        pattern = self._glob_pattern(sparte=sparte, year=year)
+        pattern = self._glob_pattern(energy_carrier=energy_carrier, year=year)
         files = sorted(self.base_dir.glob(pattern))
         if not files:
             return pl.DataFrame(schema=MEASUREMENT_POLARS_SCHEMA)
 
         lazy = pl.scan_parquet(files, hive_partitioning=False)
-        if sparte is not None:
-            lazy = lazy.filter(pl.col("sparte") == sparte.lower())
-        if messpunkt_ids is not None:
-            lazy = lazy.filter(pl.col("messpunkt_id").is_in(messpunkt_ids))
+        if energy_carrier is not None:
+            lazy = lazy.filter(pl.col("energy_carrier") == energy_carrier.lower())
+        if metering_point_ids is not None:
+            lazy = lazy.filter(pl.col("metering_point_id").is_in(metering_point_ids))
         if start_utc is not None:
             lazy = lazy.filter(pl.col("timestamp") >= start_utc)
         if end_utc is not None:
             lazy = lazy.filter(pl.col("timestamp") < end_utc)
 
-        return lazy.sort(["sparte", "messpunkt_id", "channel", "timestamp"]).collect()
+        return lazy.sort(
+            ["energy_carrier", "metering_point_id", "channel", "timestamp"]
+        ).collect()
 
     @staticmethod
-    def _glob_pattern(*, sparte: str | None, year: int | None) -> str:
-        sparte_part = f"sparte={sparte.lower()}" if sparte else "sparte=*"
+    def _glob_pattern(*, energy_carrier: str | None, year: int | None) -> str:
+        carrier_part = (
+            f"energy_carrier={energy_carrier.lower()}"
+            if energy_carrier
+            else "energy_carrier=*"
+        )
         year_part = f"year={year}" if year is not None else "year=*"
-        return f"{sparte_part}/{year_part}/*.parquet"
+        return f"{carrier_part}/{year_part}/*.parquet"

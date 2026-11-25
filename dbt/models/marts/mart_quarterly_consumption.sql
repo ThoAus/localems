@@ -2,21 +2,21 @@ with allocated as (
     select * from {{ ref('int_object_daily_allocated') }}
 ),
 
-objekte as (
-    select * from {{ ref('stg_objekte') }}
+objects as (
+    select * from {{ ref('stg_objects') }}
 )
 
 select
     a.report_year,
     a.report_quarter,
     a.year_quarter,
-    a.sparte,
+    a.energy_carrier,
     a.channel,
-    o.ebene_1,
-    o.ebene_2,
-    o.objekt_typ,
-    a.objekt_id,
-    o.objekt_name,
+    o.object_class,
+    o.level_1,
+    o.level_2,
+    a.object_id,
+    o.object_name,
     a.unit,
     a.allocation_type,
     sum(a.allocated_value) as total_consumption,
@@ -26,26 +26,27 @@ select
     sum(coalesce(a.total_burn_duration_min, 0.0)) as total_burn_duration_min,
     count(distinct a.local_date) as active_days
 from allocated a
-left join objekte o
-    on a.objekt_id = o.objekt_id
+left join objects o
+    on a.object_id = o.object_id
 group by
     a.report_year,
     a.report_quarter,
     a.year_quarter,
-    a.sparte,
+    a.energy_carrier,
     a.channel,
-    o.ebene_1,
-    o.ebene_2,
-    o.objekt_typ,
-    a.objekt_id,
-    o.objekt_name,
+    o.object_class,
+    o.level_1,
+    o.level_2,
+    a.object_id,
+    o.object_name,
     a.unit,
     a.allocation_type
 order by
     a.report_year,
     a.report_quarter,
-    a.sparte,
-    o.ebene_1,
-    o.ebene_2,
-    a.objekt_id,
+    a.energy_carrier,
+    o.object_class,
+    o.level_1,
+    o.level_2,
+    a.object_id,
     a.allocation_type
