@@ -1,0 +1,16 @@
+em_tools:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('EM_TOOLS_DUCKDB_PATH', '../data/em_tools.duckdb') }}"
+      config_options:
+        extension_directory: "{{ env_var('EM_TOOLS_DUCKDB_EXT_DIR', '../.duckdb_extensions') }}"
+      extensions:
+        - sqlite
+      attach:
+        - path: "{{ env_var('EM_TOOLS_SQLITE_PATH', '../data/db/masterdata.sqlite') }}"
+          alias: masterdata
+          type: sqlite
+          read_only: true
+      threads: 4

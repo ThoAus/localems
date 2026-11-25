@@ -1,0 +1,26 @@
+name: "em_tools_analytics"
+version: "0.1.0"
+config-version: 2
+
+profile: "em_tools"
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+vars:
+  report_timezone: "Europe/Rome"
+
+models:
+  em_tools_analytics:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table

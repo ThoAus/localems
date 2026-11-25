@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: stg_measurements
+    description: "Standardized measurements loaded directly from partitioned Apache Parquet."
+    columns:
+      - name: timestamp_utc
+        tests: [not_null]
+      - name: messpunkt_id
+        tests: [not_null]
+      - name: sparte
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["strom", "trinkwasser", "beleuchtung", "waerme", "gas", "sonstiges"]
+      - name: reading_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["interval", "cumulative", "instantaneous"]
+
+  - name: stg_objekte
+    description: "Objects and two-level organizational groupings from SQLite."
+    columns:
+      - name: objekt_id
+        tests: [not_null, unique]
+      - name: objekt_typ
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["gebaeude", "trinkwasser", "beleuchtung", "sonstiges"]
+
+  - name: stg_messpunkte
+    description: "Metering point master data from SQLite."
+    columns:
+      - name: messpunkt_id
+        tests: [not_null, unique]
+      - name: objekt_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_objekte')
+                field: objekt_id
+
+  - name: stg_hierarchie_regeln
+    description: "Time-bounded sub-meter deduction and estimation factor rules from SQLite."
+    columns:
+      - name: rule_id
+        tests: [not_null, unique]
+      - name: parent_messpunkt_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_messpunkte')
+                field: messpunkt_id
+      - name: rule_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["submeter_deduction", "estimation_factor"]

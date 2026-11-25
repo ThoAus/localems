@@ -1,0 +1,11 @@
+version: 2
+
+models:
+  - name: int_interval_measurements
+    description: "15-minute interval measurements enriched with SQLite metering point and object metadata."
+  - name: int_messpunkt_daily
+    description: "Daily metering point rollups aligned to rule validity dates."
+  - name: int_hierarchy_residuals
+    description: "Multi-level sub-meter deduction and residual calculations per metering point and day."
+  - name: int_object_daily_allocated
+    description: "Daily consumption allocated to objects across measured, residual, and estimated shares."
