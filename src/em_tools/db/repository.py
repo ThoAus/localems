@@ -14,9 +14,8 @@ TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "objects": (
         "object_id",
         "name",
-        "object_class",
-        "level_1",
-        "level_2",
+        "group",
+        "sub_group",
         "active",
         "notes",
     ),
@@ -90,10 +89,10 @@ class MasterDataRepository:
         """Return all rows of a managed master-data table ordered by primary key."""
         if table not in TABLE_COLUMNS:
             raise ValueError(f"Unsupported master-data table: {table}")
-        cols = ", ".join(TABLE_COLUMNS[table])
+        cols = ", ".join(f'"{c}"' for c in TABLE_COLUMNS[table])
         pk = PRIMARY_KEYS[table]
         with self.connect() as conn:
-            rows = conn.execute(f"SELECT {cols} FROM {table} ORDER BY {pk}").fetchall()
+            rows = conn.execute(f'SELECT {cols} FROM "{table}" ORDER BY "{pk}"').fetchall()
         return [dict(row) for row in rows]
 
     def fetch_all(self) -> dict[str, list[dict[str, Any]]]:
@@ -106,3 +105,68 @@ class MasterDataRepository:
         if not src.exists():
             raise FileNotFoundError(f"Backup file not found: {src}")
         shutil.copy2(src, self.db_path)
+
+    def resolve_metering_point_id(
+        self,
+        external_id: str,
+        *,
+        channel: str = "consumption",
+        base_external_id: str | None = None,
+    ) -> str | None:
+        """Resolve an external utility meter key (e.g. POD) to internal `metering_point_id`.
+
+        For `channel == 'pv_production'`:
+          1. Match `meter_type = 'pv_production'` with `external_id == external_id`
+          2. Match `meter_type = 'pv_production'` with `external_id == base_external_id`
+          3. Match `meter_type = 'pv_production'` attached under a parent meter whose
+             `external_id == base_external_id`
+        For consumer/grid channels (`consumption`, `grid_import`, `grid_export`):
+          1. Match `meter_type <> 'pv_production'` with `external_id == external_id`
+        """
+        if not self.db_path.exists():
+            return None
+
+        key = external_id.strip()
+        base_key = base_external_id.strip() if base_external_id else None
+
+        with self.connect() as conn:
+            if channel == "pv_production":
+                row = conn.execute(
+                    'SELECT "metering_point_id" FROM "metering_points" '
+                    'WHERE "meter_type" = \'pv_production\' AND "external_id" = ? '
+                    'ORDER BY "active" DESC LIMIT 1',
+                    (key,),
+                ).fetchone()
+                if row:
+                    return str(row["metering_point_id"])
+
+                if base_key:
+                    row = conn.execute(
+                        'SELECT "metering_point_id" FROM "metering_points" '
+                        'WHERE "meter_type" = \'pv_production\' AND "external_id" = ? '
+                        'ORDER BY "active" DESC LIMIT 1',
+                        (base_key,),
+                    ).fetchone()
+                    if row:
+                        return str(row["metering_point_id"])
+
+                    row = conn.execute(
+                        'SELECT c."metering_point_id" '
+                        'FROM "metering_points" c '
+                        'JOIN "metering_points" p '
+                        '  ON c."parent_metering_point_id" = p."metering_point_id" '
+                        'WHERE c."meter_type" = \'pv_production\' AND p."external_id" = ? '
+                        'ORDER BY c."active" DESC LIMIT 1',
+                        (base_key,),
+                    ).fetchone()
+                    if row:
+                        return str(row["metering_point_id"])
+                return None
+
+            row = conn.execute(
+                'SELECT "metering_point_id" FROM "metering_points" '
+                'WHERE "meter_type" <> \'pv_production\' AND "external_id" = ? '
+                'ORDER BY "active" DESC LIMIT 1',
+                (key,),
+            ).fetchone()
+            return str(row["metering_point_id"]) if row else None

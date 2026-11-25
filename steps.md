@@ -85,3 +85,25 @@ This file records all important architectural, technical, and organizational dec
   2. **Meter Tree on `metering_points`:** Added self-referencing `parent_metering_point_id` (`NULL` = main meter, level 0; set = sub-meter of unlimited depth). Each meter's `object_id` automatically receives its measured value (for leaf meters) or its automatic residual ("the rest" after subtracting direct children and estimation shares). `.xlsx` exports automatically compute read-only `_meter_level` and `_tree_path` columns; imports validate tree cycles and carrier/unit parity, support parent/child insertion in any row order, soft-delete removed rows (`active = 0`), and back up SQLite before commit.
   3. **Lightweight `estimation_rules` Table:** Dedicated table (`rule_id` auto-assigned, `source_metering_point_id`, `target_object_id`, `factor`, `valid_from`, `valid_to`, `active`) for percentage splits on a meter's net rest.
   4. **Recursive dbt Tree & Energy Conservation Test:** Added `int_metering_point_tree` (`WITH RECURSIVE` deriving `meter_level`, `is_main_meter`, `root_metering_point_id`, `tree_path`) and `assert_energy_conservation_per_root` verifying that every root meter's gross energy equals the sum of all allocations across its subtree.
+
+## Simplified `objects` Table (`group` / `sub_group`, Removed `object_class`)
+- **Date:** 2026-11-25
+- **Status:** Decided
+- **Description:** Removed the redundant `object_class` enum column from `objects` and renamed `level_1` / `level_2` to `group` / `sub_group`. Using free-form `group` and `sub_group` values (e.g., `Buildings / Administration`, `Education / Primary Schools`, `Public Lighting / Center`) covers functional and organizational reporting without locking users into a rigid enum. Because `group` is a SQL keyword, all SQLite and DuckDB queries quote `"group"`.
+
+## Photovoltaic (PV) Plant Support (Channels, Busbar Balance & Quarterly PV Mart)
+- **Date:** 2026-11-25
+- **Status:** Decided
+- **Description:** Added first-class PV plant accounting across Python, SQLite, Parquet, and `dbt-duckdb`:
+  1. **Standardized Parquet `channel` enum:** `consumption`, `grid_import`, `grid_export`, and `pv_production` (bidirectional grid meters keep a single `metering_point_id` with both `grid_import` and `grid_export` channels).
+  2. **`meter_type = 'pv_production'`:** Behind-the-meter self-consumption PV plants link to their grid meter via `parent_metering_point_id`; standalone full feed-in plants have `parent_metering_point_id = NULL`. Roundtrip validator enforces `energy_carrier == 'electricity'` and forbids consumer sub-meters underneath a `pv_production` meter.
+  3. **Exact Busbar Balance & Conservation:** `int_hierarchy_residuals` computes `total_site_supply = grid_import + attached_pv_production - grid_export` before deducting consumer sub-meters (`child.import - child.export`), preventing false negative residuals on sunny days while preserving exact energy conservation (`sum(allocated) == root_grid_import - root_grid_export + subtree_pv_production`).
+  4. **15-Min Plausibility & PV KPI Mart:** Added `int_pv_interval_balance`, `mart_quarterly_pv_summary` (`pv_production_kwh`, `grid_export_kwh`, `grid_import_kwh`, `self_consumption_kwh`, `self_consumption_rate_pct`, `autarky_rate_pct`), and `assert_pv_export_not_exceeding_production`.
+
+## Filename-Based Auto-Detection & Production Edyna `.xlsx` DST Reader
+- **Date:** 2026-11-25
+- **Status:** Decided
+- **Description:** Implemented automatic reader dispatching via `BaseReader.can_read(path)`, `ReaderRegistry.detect(path)`, and `ingest_file()` / `ingest_directory()` (also powering `em-tools ingest <file_or_dir>` with `--reader` optional). Upgraded `EdynaXlsxReader` against real Edyna exports:
+  - Matches `ATTIVA_<POD>_<YYYYMM>.xlsx` (`grid_import`), `ATTIVA_S_<POD>_<YYYYMM>.xlsx` (`grid_export`), and `ATTIVA_<POD>P_<YYYYMM>.xlsx` (`pv_production`).
+  - Handles EU summer/winter DST transitions in `Europe/Rome` (`92` intervals on spring-forward 23h day, `96` on normal 24h days while ignoring zero-filled `Ora 25` columns, and `100` distinct UTC intervals using `Ora 25` with `fold=1` on fall-back 25h day).
+  - Resolves external POD keys automatically against SQLite `metering_points.external_id` (falling back to the extracted key if not yet registered).

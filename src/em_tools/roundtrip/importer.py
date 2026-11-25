@@ -272,34 +272,36 @@ def import_from_editor(
             for row in inserts:
                 if table == "estimation_rules" and row["rule_id"] is None:
                     insert_cols = [c for c in columns if c != "rule_id"] + ["updated_at"]
+                    quoted_cols = ", ".join(f'"{c}"' for c in insert_cols)
                     placeholders = ", ".join("?" for _ in insert_cols)
                     values = [row[c] for c in columns if c != "rule_id"] + [now_iso]
                     cur = conn.execute(
-                        f"INSERT INTO {table} ({', '.join(insert_cols)}) VALUES ({placeholders})",
+                        f'INSERT INTO "{table}" ({quoted_cols}) VALUES ({placeholders})',
                         values,
                     )
                     assert cur.lastrowid is not None
                     report.assigned_rule_ids.append(int(cur.lastrowid))
                 else:
                     insert_cols = list(columns) + ["updated_at"]
+                    quoted_cols = ", ".join(f'"{c}"' for c in insert_cols)
                     placeholders = ", ".join("?" for _ in insert_cols)
                     values = [row[c] for c in columns] + [now_iso]
                     conn.execute(
-                        f"INSERT INTO {table} ({', '.join(insert_cols)}) VALUES ({placeholders})",
+                        f'INSERT INTO "{table}" ({quoted_cols}) VALUES ({placeholders})',
                         values,
                     )
 
             for upd in diff.updates:
-                set_parts = [f"{chg.field} = ?" for chg in upd.changes] + ["updated_at = ?"]
+                set_parts = [f'"{chg.field}" = ?' for chg in upd.changes] + ['"updated_at" = ?']
                 values = [chg.new_value for chg in upd.changes] + [now_iso, upd.key]
                 conn.execute(
-                    f"UPDATE {table} SET {', '.join(set_parts)} WHERE {pk_col} = ?",
+                    f'UPDATE "{table}" SET {", ".join(set_parts)} WHERE "{pk_col}" = ?',
                     values,
                 )
 
             for pk_val in diff.soft_deletes:
                 conn.execute(
-                    f"UPDATE {table} SET active = 0, updated_at = ? WHERE {pk_col} = ?",
+                    f'UPDATE "{table}" SET "active" = 0, "updated_at" = ? WHERE "{pk_col}" = ?',
                     (now_iso, pk_val),
                 )
 

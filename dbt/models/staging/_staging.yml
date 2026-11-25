@@ -14,6 +14,12 @@ models:
           - accepted_values:
               arguments:
                 values: ["electricity", "water", "gas", "heating", "other"]
+      - name: channel
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["consumption", "grid_import", "grid_export", "pv_production"]
       - name: reading_type
         tests:
           - not_null
@@ -22,16 +28,14 @@ models:
                 values: ["interval", "cumulative", "instantaneous"]
 
   - name: stg_objects
-    description: "Objects with functional object_class and two-level organizational groupings from SQLite."
+    description: "Objects with group and sub_group reporting hierarchy from SQLite."
     columns:
       - name: object_id
         tests: [not_null, unique]
-      - name: object_class
-        tests:
-          - not_null
-          - accepted_values:
-              arguments:
-                values: ["building", "school", "public_lighting", "water_supply", "sports", "mobility", "other"]
+      - name: '"group"'
+        tests: [not_null]
+      - name: sub_group
+        tests: [not_null]
 
   - name: stg_metering_points
     description: "Self-describing metering point tree (parent_metering_point_id = NULL for main meters) from SQLite."
@@ -51,6 +55,12 @@ models:
           - accepted_values:
               arguments:
                 values: ["electricity", "water", "gas", "heating", "other"]
+      - name: meter_type
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["smartmeter", "submeter", "manual", "virtual", "pv_production"]
 
   - name: stg_estimation_rules
     description: "Time-bounded percentage allocation rules for splitting residual consumption across unmetered objects."

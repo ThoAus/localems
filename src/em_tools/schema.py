@@ -8,6 +8,7 @@ import polars as pl
 import pyarrow as pa
 
 ALLOWED_ENERGY_CARRIERS = frozenset({"electricity", "water", "gas", "heating", "other"})
+ALLOWED_CHANNELS = frozenset({"consumption", "grid_import", "grid_export", "pv_production"})
 ALLOWED_READING_TYPES = frozenset({"interval", "cumulative", "instantaneous"})
 ALLOWED_QUALITIES = frozenset(
     {"measured", "manual", "estimated", "interpolated", "suspect"}
@@ -177,6 +178,7 @@ def normalize_measurements(
     # Normalize enum & identifier strings
     work = work.with_columns(
         pl.col("energy_carrier").str.strip_chars().str.to_lowercase(),
+        pl.col("channel").str.strip_chars().str.to_lowercase(),
         pl.col("reading_type").str.strip_chars().str.to_lowercase(),
         pl.col("quality").str.strip_chars().str.to_lowercase(),
         pl.col("metering_point_id").str.strip_chars(),
@@ -206,6 +208,13 @@ def validate_measurements(df: pl.DataFrame) -> None:
         raise SchemaValidationError(
             f"Invalid energy_carrier value(s): {sorted(invalid_carriers)}. "
             f"Allowed: {sorted(ALLOWED_ENERGY_CARRIERS)}"
+        )
+
+    invalid_channels = set(df["channel"].unique().to_list()) - ALLOWED_CHANNELS
+    if invalid_channels:
+        raise SchemaValidationError(
+            f"Invalid channel value(s): {sorted(invalid_channels)}. "
+            f"Allowed: {sorted(ALLOWED_CHANNELS)}"
         )
 
     invalid_rtypes = set(df["reading_type"].unique().to_list()) - ALLOWED_READING_TYPES

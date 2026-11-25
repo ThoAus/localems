@@ -26,12 +26,11 @@ HELPER_COLUMNS: dict[str, tuple[str, ...]] = {
 
 DROPDOWN_VALIDATIONS: dict[str, dict[str, str]] = {
     "objects": {
-        "object_class": '"building,school,public_lighting,water_supply,sports,mobility,other"',
         "active": '"1,0"',
     },
     "metering_points": {
         "energy_carrier": '"electricity,water,gas,heating,other"',
-        "meter_type": '"smartmeter,submeter,manual,virtual"',
+        "meter_type": '"smartmeter,submeter,manual,virtual,pv_production"',
         "active": '"1,0"',
     },
     "estimation_rules": {
@@ -49,28 +48,35 @@ EDITOR_GUIDE_ROWS = [
         "auto-computed.",
     ),
     (
-        "2. Automatic rest & mixed classes",
+        "2. Automatic rest & mixed groups",
         "Each meter's 'object_id' owns its measured value (for leaf meters) OR its automatic "
         "residual ('the rest' after subtracting direct sub-meters and estimation shares). Parent "
-        "and sub-meters must share energy_carrier & unit, but their objects can have different "
-        "object_class values (e.g. building, school, public_lighting).",
+        "and sub-meters must share energy_carrier & unit, while their objects can belong to any "
+        "group / sub_group (e.g. Buildings, Schools, Public Lighting).",
     ),
     (
-        "3. Adding estimation_rules",
+        "3. Photovoltaic (PV) plants",
+        "Bidirectional grid meters keep one metering_point_id with Parquet channels 'grid_import' "
+        "and 'grid_export'. Add the PV generator with meter_type='pv_production' and set "
+        "parent_metering_point_id to the grid meter it feeds into (or leave blank for standalone "
+        "full feed-in PV plants).",
+    ),
+    (
+        "4. Adding estimation_rules",
         "Leave 'rule_id' EMPTY on new rows; the importer assigns primary keys automatically. "
         "Active overlapping factors per source meter must sum <= 1.0.",
     ),
     (
-        "4. Editing & managed columns",
+        "5. Editing & managed columns",
         "Edit any business column directly. Do NOT edit gray columns ('_meter_level', "
         "'_tree_path', '_row_hash').",
     ),
     (
-        "5. Removing rows (soft-delete)",
+        "6. Removing rows (soft-delete)",
         "Deleting a row from a sheet marks it inactive (active=0) in SQLite to preserve history.",
     ),
     (
-        "6. Dates & backups",
+        "7. Dates & backups",
         "Use ISO dates YYYY-MM-DD (leave 'valid_to' blank for open-ended). Import validates FKs, "
         "carrier/unit match, factor sums, and tree cycles, and backs up SQLite before commit.",
     ),

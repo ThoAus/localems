@@ -14,7 +14,7 @@ HASH_COLUMN = "_row_hash"
 INT_COLUMNS = frozenset({"rule_id", "active"})
 FLOAT_COLUMNS = frozenset({"factor"})
 DATE_COLUMNS = frozenset({"valid_from", "valid_to"})
-LOWER_ENUM_COLUMNS = frozenset({"object_class", "energy_carrier", "meter_type"})
+LOWER_ENUM_COLUMNS = frozenset({"energy_carrier", "meter_type"})
 
 
 def normalize_cell(column: str, value: Any) -> Any:

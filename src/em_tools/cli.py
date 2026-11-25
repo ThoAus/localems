@@ -6,12 +6,13 @@ import argparse
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from em_tools.config import EmToolsConfig
 from em_tools.db.repository import MasterDataRepository
+from em_tools.ingest import ingest_directory, ingest_file
 from em_tools.readers.registry import DEFAULT_REGISTRY
 from em_tools.roundtrip import RoundtripValidationError, export_to_editor, import_from_editor
-from em_tools.storage import ParquetMeasurementStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,21 +60,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and print diff without backing up or modifying SQLite.",
     )
 
-    # ingest
+    # ingest (supports single file OR directory with automatic filename-based reader detection)
     p_ing = sub.add_parser(
         "ingest",
-        help="Read an input file using a registered reader and upsert into Parquet.",
+        help="Read a file or folder (auto-detecting reader by filename) and upsert into Parquet.",
     )
-    p_ing.add_argument("input_file", type=Path, help="Path to the raw measurement file.")
+    p_ing.add_argument(
+        "input_path",
+        type=Path,
+        help="Path to a raw measurement file or a directory of raw files.",
+    )
     p_ing.add_argument(
         "--reader",
-        required=True,
-        help="Reader name (run `em-tools readers` to list available readers).",
+        default=None,
+        help="Optional reader name (omit to auto-detect from filename & extension).",
+    )
+    p_ing.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recursively scan subdirectories when `input_path` is a directory.",
     )
     p_ing.add_argument(
         "--energy-carrier",
         default=None,
         help="Override/default energy_carrier (e.g. electricity, water, gas, heating).",
+    )
+    p_ing.add_argument(
+        "--channel",
+        default=None,
+        help="Override/default channel (consumption, grid_import, grid_export, pv_production).",
     )
     p_ing.add_argument("--unit", default=None, help="Override/default unit (e.g. kWh, m3).")
     p_ing.add_argument(
@@ -144,16 +159,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "ingest":
-        cfg.ensure_directories()
-        reader = DEFAULT_REGISTRY.get(args.reader)
         tz = args.timezone or cfg.default_timezone
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "default_timezone": tz,
             "separator": args.separator,
             "decimal_comma": args.decimal_comma,
         }
         if args.energy_carrier is not None:
             kwargs["energy_carrier"] = args.energy_carrier
+        if args.channel is not None:
+            kwargs["channel"] = args.channel
         if args.unit is not None:
             kwargs["unit"] = args.unit
         if args.metering_point_id is not None:
@@ -161,18 +176,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.object_id is not None:
             kwargs["object_id"] = args.object_id
 
-        df = reader.read(args.input_file, **kwargs)
-        store = ParquetMeasurementStore(
-            cfg.parquet_dir,
-            compression=cfg.parquet_compression,
-            default_timezone=tz,
-        )
-        summary = store.write(df)
+        target = args.input_path
+        if target.is_dir():
+            batch = ingest_directory(
+                target, config=cfg, recursive=args.recursive, **kwargs
+            )
+            print(batch.format_summary())
+            return 0
+
+        try:
+            res = ingest_file(target, config=cfg, reader_name=args.reader, **kwargs)
+        except (LookupError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
         print(
-            f"Ingested {summary.rows_input} row(s) into {summary.partitions_written} "
-            f"partition(s) ({summary.rows_stored} total deduplicated rows stored)."
+            f"Ingested {res.rows_input} row(s) from '{res.file_path.name}' "
+            f"(reader={res.reader_name}, mp={list(res.metering_point_ids)}, "
+            f"channel={list(res.channels)}) into {res.partitions_written} partition(s) "
+            f"({res.rows_stored} total deduplicated rows stored)."
         )
-        for p in summary.partition_files:
+        for p in res.partition_files:
             print(f"  -> {p}")
         return 0
 

@@ -9,8 +9,8 @@
 ## 1. Task & Requirements
 
 ### Use Case & Scope
-- **Domain:** Standardized storage and quarterly reporting of 15-minute interval data across physical energy carriers (`electricity`, `water`, `gas`, `heating`, `other`) and functional object classes (`building`, `school`, `public_lighting`, `water_supply`, `sports`, `mobility`, `other`).
-- **Decoupled Physical vs. Functional Model:** Physical subtraction compatibility is governed by `energy_carrier` + `unit` on `metering_points` and Parquet, while reporting classes (`object_class`, `level_1`, `level_2`) live strictly on `objects`. Under one electricity main meter, sub-meters can belong to a `building` and a `school` while the automatic residual ("the rest") belongs to `public_lighting`.
+- **Domain:** Standardized storage and quarterly reporting of 15-minute interval data across physical energy carriers (`electricity`, `water`, `gas`, `heating`, `other`) and flexible reporting groups (`group`, `sub_group` on `objects`).
+- **Decoupled Physical vs. Organizational Model:** Physical subtraction compatibility is governed by `energy_carrier` + `unit` on `metering_points` and Parquet, while reporting groupings (`group`, `sub_group`) live strictly on `objects`. Under one electricity main meter, sub-meters can belong to `Buildings` and `Education` while the automatic residual ("the rest") belongs to `Public Lighting`.
 - **Language Standard:** All project code, schemas, SQLite tables, Parquet columns, dbt models, CLI flags, tests, and documentation use **consistent English** identifiers. Source-specific parsers map any non-English raw provider headers (such as Italian or German export columns) into the canonical English schema at ingestion time.
 - **Cadence:** No real-time requirement; primary focus is **quarterly reporting** (KPIs, recursive meter-tree rollups, automatic residual allocation, plausibility audits, and energy conservation checks).
 - **Scale & Storage:** Local directory store (`data/parquet/`), designed for ~10–200 metering points per carrier, partitioned by **`energy_carrier` + `year`**.
@@ -23,7 +23,7 @@
 ```text
 +--------------------------+        +------------------------------------+
 | Raw Input Files          |        | SQLite (Single Source of Truth)    |
-| - Edyna 15-min XLSX      |        | - objects (object_class, level_1/2)|
+| - Edyna 15-min XLSX      |        | - objects (group, sub_group)       |
 | - Tidy CSV / Sub-meters  |        | - metering_points (tree via        |
 | - Manual readings        |        |   parent_metering_point_id; NULL   |
 +------------+-------------+        |   = main meter, unlimited depth)   |
@@ -58,33 +58,36 @@
 
 ### A) Standardized Measurement Store (Apache Parquet via Polars + PyArrow)
 - **No small-file problem:** Measurements are bundled by **`energy_carrier` and `year`** (`data/parquet/energy_carrier=<carrier>/year=<YYYY>/measurements.parquet`).
-- **No rigid folder hierarchies:** Functional classes (`object_class`) and organizational groupings (`level_1`, `level_2`) live in SQLite, never in folder trees, so reclassifying assets requires zero Parquet data movement.
+- **No rigid folder hierarchies:** Reporting groupings (`group`, `sub_group`) live in SQLite, never in folder trees, so reorganizing assets requires zero Parquet data movement.
 - **Idempotent ingestion:** Natural uniqueness key `(metering_point_id, energy_carrier, channel, timestamp, reading_type)` deduplicates re-imported overlapping files (keeping the latest `ingested_at`).
 
 ### B) Master Data Tree & Estimation Rules (SQLite + `.xlsx` Roundtrip)
 - **Single Source of Truth (`data/db/masterdata.sqlite`):**
-  - `objects`: `object_id`, `name`, `object_class`, `level_1`, `level_2`, `active`, `notes`
+  - `objects`: `object_id`, `name`, `group`, `sub_group`, `active`, `notes`
   - `metering_points`: `metering_point_id`, `parent_metering_point_id` (`NULL` = main meter; set = sub-meter of unlimited depth), `object_id` (direct owner for leaf meters, or **automatic residual owner** for parent meters), `energy_carrier`, `name`, `external_id`, `unit`, `meter_type`, `active`, `valid_from`, `valid_to`, `notes`
   - `estimation_rules`: `rule_id` (auto-assigned), `source_metering_point_id`, `target_object_id`, `factor` `(0, 1]`, `valid_from`, `valid_to`, `active`, `notes`
 - **Roundtrip Workflow (`export_to_editor` ↔ `import_from_editor`):**
   - Exports a formatted `.xlsx` workbook (Excel & LibreOffice Calc) with dropdown validations, read-only auto-computed `_meter_level` & `_tree_path` helpers on `metering_points`, and a managed `_row_hash` column.
   - Leave `rule_id` empty for new `estimation_rules` rows — primary keys are assigned automatically on import.
-  - Pre-commit validation checks FKs, matching `energy_carrier` & `unit` between parent and child meters (while allowing mixed `object_class` values), DFS cycle detection on `metering_points`, overlapping estimation factor sums `<= 1.0`, and date validity.
+  - Pre-commit validation checks FKs, matching `energy_carrier` & `unit` between parent and child meters (while allowing mixed `group` / `sub_group` assignments), DFS cycle detection on `metering_points`, overlapping estimation factor sums `<= 1.0`, and date validity.
   - Supports inserting children and parents in any row order (`PRAGMA defer_foreign_keys = ON` + topological ordering).
   - Rows removed from the workbook are **soft-deleted** (`active = 0`) to preserve historical auditability.
   - Creates an **automatic consistent SQLite backup** in `data/db/backups/` before every commit.
 
-### C) Recursive Tree, Automatic Residuals & Quarterly Reports (`dbt-duckdb`)
+### C) Recursive Tree, PV Energy Balance, Automatic Residuals & Quarterly Reports (`dbt-duckdb`)
 - DuckDB attaches `masterdata.sqlite` (read-only) and queries Parquet directly.
+- **PV Energy Balance:** Bidirectional grid meters share one `metering_point_id` with channels `grid_import` and `grid_export`; behind-the-meter PV generators use `meter_type = 'pv_production'` linked via `parent_metering_point_id` (or `NULL` for standalone full feed-in plants). For any PV-equipped site:
+  - `self_consumption = pv_production - grid_export`
+  - `total_site_supply = grid_import + pv_production - grid_export` (used before deducting consumer sub-meters, preventing false negative residuals on sunny days).
 - **Layers (`dbt/models/`):**
   - `staging`: `stg_measurements`, `stg_objects`, `stg_metering_points`, `stg_estimation_rules`
   - `intermediate`:
     - `int_metering_point_tree` (`WITH RECURSIVE` deriving `meter_level`, `is_main_meter`, `root_metering_point_id`, `tree_path` with unlimited depth)
-    - `int_interval_measurements`, `int_metering_point_daily`
-    - `int_hierarchy_residuals` (direct-children subtraction at every node — zero double counting — plus automatic residual calculation and negative-residual detection)
-    - `int_object_daily_allocated` (combines `measured`, `residual`, and `estimated_share` rows across mixed `object_class` targets)
-  - `marts`: `mart_quarterly_consumption`, `mart_plausibility_summary`
-- **Data Quality Tests (`dbt/tests/`):** duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, DST-aware active-day 15-minute completeness (`92 / 96 / 100`), and **per-root energy conservation** (`sum(subtree allocations) == root gross value`).
+    - `int_interval_measurements`, `int_pv_interval_balance` (15-min PV balance), `int_metering_point_daily`
+    - `int_hierarchy_residuals` (busbar supply + direct-children subtraction at every node — zero double counting — plus automatic residual calculation and negative-residual detection)
+    - `int_object_daily_allocated` (combines `measured`, `residual`, and `estimated_share` rows across mixed `group` / `sub_group` targets)
+  - `marts`: `mart_quarterly_consumption`, `mart_quarterly_pv_summary` (production, feed-in, grid import, self-consumption rate, autarky rate), `mart_plausibility_summary`
+- **Data Quality Tests (`dbt/tests/`):** duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, DST-aware active-day 15-minute completeness (`92 / 96 / 100`), **15-minute PV export vs. production plausibility**, and **per-root energy conservation** (`sum(subtree allocations) == root_grid_import - root_grid_export + subtree_pv_production`).
 
 ---
 
@@ -97,7 +100,7 @@
 | `metering_point_id` | `string` | No | Base | Stable metering point ID (e.g., POD or internal ID). |
 | `object_id` | `string` | Yes | Base | Optional object ID (SQLite `metering_points.object_id` is authoritative in dbt). |
 | `energy_carrier` | `string` | No | Base | Physical carrier: `electricity`, `water`, `gas`, `heating`, `other`. |
-| `channel` | `string` | No | Base | Register/channel (default `consumption`). |
+| `channel` | `string` | No | Base | Flow/register: `consumption`, `grid_import`, `grid_export`, or `pv_production`. |
 | `value` | `float64` | No | Base | Standardized consumption or measurement quantity. |
 | `unit` | `string` | No | Base | Canonical unit (`kWh`, `m3`, `kW`, …). |
 | `reading_type` | `string` | No | Base | `interval`, `cumulative`, or `instantaneous`. |
@@ -189,16 +192,19 @@ em-tools import-editor data/editor/masterdata_roundtrip.xlsx --dry-run
 em-tools import-editor data/editor/masterdata_roundtrip.xlsx
 ```
 
-### 3. Ingest Measurement Files into Parquet
+### 3. Ingest Measurement Files into Parquet (Auto-Detected by Filename)
 
 ```powershell
 # List available readers
 em-tools readers
 
-# Ingest an Edyna 15-minute electricity .xlsx export
-em-tools ingest data/raw/edyna_2026_q1.xlsx --reader edyna_xlsx
+# Auto-ingest an entire folder (detects reader & channel by filename, resolves external_id via SQLite)
+em-tools ingest data/raw
 
-# Ingest a generic semicolon/decimal-comma CSV (e.g., water meter)
+# Auto-ingest a single Edyna file (ATTIVA_<POD>_YYYYMM.xlsx, ATTIVA_S_<POD>_YYYYMM.xlsx, ATTIVA_<POD>P_YYYYMM.xlsx)
+em-tools ingest data/raw/ATTIVA_IT005E00143758_202601.xlsx
+
+# Explicit reader for generic CSV files (e.g., water meter)
 em-tools ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --decimal-comma --energy-carrier water --unit m3 --metering-point-id MP-WATER-01
 ```
 

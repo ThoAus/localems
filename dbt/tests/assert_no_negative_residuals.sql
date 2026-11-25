@@ -1,8 +1,7 @@
--- Fails if sub-meter deductions exceed parent meter consumption on any day
+-- Fails if sub-meter deductions exceed parent meter busbar supply on any day
 select
     metering_point_id,
     energy_carrier,
-    channel,
     local_date,
     gross_value,
     submeter_deduction_value,

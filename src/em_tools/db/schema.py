@@ -9,19 +9,13 @@ SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS objects (
-    object_id    TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    object_class TEXT NOT NULL CHECK (
-        object_class IN (
-            'building', 'school', 'public_lighting', 'water_supply',
-            'sports', 'mobility', 'other'
-        )
-    ),
-    level_1      TEXT NOT NULL,
-    level_2      TEXT NOT NULL,
-    active       INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-    notes        TEXT,
-    updated_at   TEXT NOT NULL
+    object_id   TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    "group"     TEXT NOT NULL,
+    sub_group   TEXT NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    notes       TEXT,
+    updated_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS metering_points (
@@ -35,7 +29,7 @@ CREATE TABLE IF NOT EXISTS metering_points (
     external_id              TEXT,
     unit                     TEXT NOT NULL,
     meter_type               TEXT NOT NULL DEFAULT 'smartmeter' CHECK (
-        meter_type IN ('smartmeter', 'submeter', 'manual', 'virtual')
+        meter_type IN ('smartmeter', 'submeter', 'manual', 'virtual', 'pv_production')
     ),
     active                   INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     valid_from               TEXT,

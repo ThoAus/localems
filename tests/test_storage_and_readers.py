@@ -53,6 +53,30 @@ def test_normalize_rejects_invalid_energy_carrier() -> None:
         normalize_measurements(df)
 
 
+def test_normalize_accepts_pv_channels_and_rejects_invalid_channel() -> None:
+    ok_df = pl.DataFrame(
+        {
+            "timestamp": [
+                datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+                datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+                datetime(2026, 6, 1, 10, 0, tzinfo=UTC),
+            ],
+            "metering_point_id": ["MP-GRID", "MP-GRID", "MP-PV"],
+            "energy_carrier": ["electricity", "electricity", "electricity"],
+            "channel": ["grid_import", "grid_export", "pv_production"],
+            "value": [0.5, 4.0, 7.5],
+            "unit": ["kWh", "kWh", "kWh"],
+            "source": ["test", "test", "test"],
+        }
+    )
+    norm = normalize_measurements(ok_df)
+    assert norm["channel"].to_list() == ["grid_import", "grid_export", "pv_production"]
+
+    bad_df = ok_df.with_columns(pl.lit("invalid_channel").alias("channel"))
+    with pytest.raises(SchemaValidationError, match="Invalid channel"):
+        normalize_measurements(bad_df)
+
+
 def test_parquet_store_partitions_by_carrier_and_year_and_deduplicates(tmp_path: Path) -> None:
     store = ParquetMeasurementStore(tmp_path / "parquet")
 

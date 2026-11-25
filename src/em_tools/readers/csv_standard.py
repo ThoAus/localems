@@ -37,6 +37,7 @@ class StandardCsvReader(BaseReader):
         default_timezone: str = "Europe/Rome",
         metering_point_id: str | None = None,
         energy_carrier: str | None = None,
+        channel: str | None = None,
         unit: str | None = None,
         interval_minutes: int | None = 15,
         reading_type: str | None = None,
@@ -57,6 +58,8 @@ class StandardCsvReader(BaseReader):
             additions.append(pl.lit(metering_point_id).alias("metering_point_id"))
         if "energy_carrier" not in df.columns and energy_carrier is not None:
             additions.append(pl.lit(energy_carrier).alias("energy_carrier"))
+        if "channel" not in df.columns and channel is not None:
+            additions.append(pl.lit(channel).alias("channel"))
         if "unit" not in df.columns and unit is not None:
             additions.append(pl.lit(unit).alias("unit"))
         if "interval_minutes" not in df.columns and interval_minutes is not None:

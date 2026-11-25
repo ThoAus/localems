@@ -1,4 +1,4 @@
-"""End-to-end integration test: CLI + Parquet + meter tree roundtrip + dbt-duckdb run & test."""
+"""End-to-end integration test: CLI + Parquet + meter tree + PV plants + dbt-duckdb run & test."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ def _make_full_day_rows(
     unit: str,
     daily_total: float,
     *,
+    channel: str = "consumption",
     peak_power_kw: float | None = None,
 ) -> list[dict]:
     per_interval = daily_total / 96.0
@@ -40,6 +41,7 @@ def _make_full_day_rows(
                 "interval_minutes": 15,
                 "metering_point_id": metering_point_id,
                 "energy_carrier": energy_carrier,
+                "channel": channel,
                 "value": per_interval,
                 "unit": unit,
                 "peak_power_kw": peak_power_kw,
@@ -49,7 +51,7 @@ def _make_full_day_rows(
     return rows
 
 
-def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None:
+def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> None:
     if importlib.util.find_spec("dbt.cli.main") is None:
         pytest.skip("dbt-duckdb is not installed in this environment")
 
@@ -60,31 +62,41 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
     editor_xlsx = data_dir / "editor" / "masterdata_roundtrip.xlsx"
     wb = openpyxl.load_workbook(editor_xlsx)
 
-    # Mixed object classes under one main electricity meter + independent water meter:
-    #   MP-TOWN-MAIN (1000 kWh, L0, rest -> OBJ-STREETLIGHTS [public_lighting])
-    #   ├── MP-BLDG   (500 kWh, L1, rest -> OBJ-TOWNHALL [building])
-    #   │   └── MP-LIB (120 kWh, L2, measured -> OBJ-LIBRARY [building])
-    #   └── MP-SCHOOL (300 kWh, L1, measured -> OBJ-SCHOOL [school])
-    #   estimation_rules: 20% of MP-TOWN-MAIN's net rest (200 kWh) -> OBJ-EV [mobility] (40 kWh)
-    #   automatic remaining rest -> OBJ-STREETLIGHTS [public_lighting] (160 kWh)
-    #   Total = 120 + 380 + 300 + 40 + 160 = 1000.0 kWh (exact conservation!)
+    # Mixed object groups under one bidirectional main electricity meter WITH behind-the-meter PV
+    # + standalone full feed-in PV plant + independent water meter:
+    #   MP-TOWN-MAIN (grid_import=750, grid_export=150) + attached MP-TOWN-PV (pv_production=400)
+    #     -> self_consumption = 250 kWh (62.5% of PV), autarky = 25.0%
+    #     -> total busbar supply = 750 + 400 - 150 = 1000.0 kWh
+    #   ├── MP-BLDG   (500 kWh, L1, rest -> OBJ-TOWNHALL [Buildings / Administration] = 380)
+    #   │   └── MP-LIB (120 kWh, L2, measured -> OBJ-LIBRARY [Buildings / Culture] = 120)
+    #   ├── MP-SCHOOL (300 kWh, L1, measured -> OBJ-SCHOOL [Education / Primary Schools] = 300)
+    #   └── MP-TOWN-PV (400 kWh, L1, pv_production feeding MP-TOWN-MAIN)
+    #   estimation_rules: 20% of MP-TOWN-MAIN's net rest (200 kWh) -> OBJ-EV [Mobility] = 40 kWh
+    #   automatic remaining rest -> OBJ-STREETLIGHTS [Public Lighting] = 160 kWh
+    #   Total electricity consumption = 120 + 380 + 300 + 40 + 160 = 1000.0 kWh (conserved!)
+    #   Standalone full feed-in PV: MP-PV-SOLO (600 kWh pv_production & grid_export) -> PV mart only
     ws_obj = wb["objects"]
     ws_obj.append(
-        ["OBJ-STREETLIGHTS", "Center Streetlights", "public_lighting", "Infra", "Lighting", 1, None]
+        ["OBJ-STREETLIGHTS", "Center Streetlights", "Public Lighting", "Center", 1, None]
     )
-    ws_obj.append(["OBJ-TOWNHALL", "Town Hall", "building", "Admin", "Core", 1, None])
-    ws_obj.append(["OBJ-LIBRARY", "Public Library", "building", "Culture", "Libraries", 1, None])
-    ws_obj.append(["OBJ-SCHOOL", "Primary School", "school", "Education", "Schools", 1, None])
-    ws_obj.append(["OBJ-EV", "EV Charging Station", "mobility", "Infra", "Charging", 1, None])
-    ws_obj.append(
-        ["OBJ-RESERVOIR", "North Reservoir", "water_supply", "Infra", "Water", 1, None]
-    )
+    ws_obj.append(["OBJ-TOWNHALL", "Town Hall", "Buildings", "Administration", 1, None])
+    ws_obj.append(["OBJ-LIBRARY", "Public Library", "Buildings", "Culture", 1, None])
+    ws_obj.append(["OBJ-SCHOOL", "Primary School", "Education", "Primary Schools", 1, None])
+    ws_obj.append(["OBJ-EV", "EV Charging Station", "Mobility", "Charging", 1, None])
+    ws_obj.append(["OBJ-RESERVOIR", "North Reservoir", "Water Supply", "Reservoirs", 1, None])
+    ws_obj.append(["OBJ-SOLAR-PARK", "Depot PV Roof", "Energy Generation", "PV Plants", 1, None])
 
     ws_mp = wb["metering_points"]
     ws_mp.append(
         [
-            "MP-TOWN-MAIN", None, "OBJ-STREETLIGHTS", "electricity", "Main Town Meter",
+            "MP-TOWN-MAIN", None, "OBJ-STREETLIGHTS", "electricity", "Main Town Grid Meter",
             "POD-MAIN", "kWh", "smartmeter", 1, "2026-01-01", None, None,
+        ]
+    )
+    ws_mp.append(
+        [
+            "MP-TOWN-PV", "MP-TOWN-MAIN", "OBJ-STREETLIGHTS", "electricity", "Town Hall PV Array",
+            "M2-TOWN", "kWh", "pv_production", 1, "2026-01-01", None, None,
         ]
     )
     ws_mp.append(
@@ -107,6 +119,12 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
     )
     ws_mp.append(
         [
+            "MP-PV-SOLO", None, "OBJ-SOLAR-PARK", "electricity", "Depot Full Feed-In PV",
+            "M2-DEPOT", "kWh", "pv_production", 1, "2026-01-01", None, None,
+        ]
+    )
+    ws_mp.append(
+        [
             "MP-WATER-1", None, "OBJ-RESERVOIR", "water", "Reservoir Water Meter",
             "W-1", "m3", "smartmeter", 1, "2026-01-01", None, None,
         ]
@@ -119,12 +137,28 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
 
     assert cli_main(["--data-dir", str(data_dir), "import-editor", str(editor_xlsx)]) == 0
 
-    # Write 1 full 15-min day (2026-02-10 local Europe/Rome) for all meters
+    # Write 1 full 15-min day (2026-02-10 local Europe/Rome) for all meters and channels
     day = datetime(2026, 2, 10, 0, 0)
     rows = []
+    # Bidirectional main meter: grid_import=750, grid_export=150
     rows.extend(
-        _make_full_day_rows(day, "MP-TOWN-MAIN", "electricity", "kWh", 1000.0, peak_power_kw=55.0)
+        _make_full_day_rows(
+            day, "MP-TOWN-MAIN", "electricity", "kWh", 750.0,
+            channel="grid_import", peak_power_kw=48.0,
+        )
     )
+    rows.extend(
+        _make_full_day_rows(
+            day, "MP-TOWN-MAIN", "electricity", "kWh", 150.0, channel="grid_export"
+        )
+    )
+    # Attached behind-the-meter PV: pv_production=400
+    rows.extend(
+        _make_full_day_rows(
+            day, "MP-TOWN-PV", "electricity", "kWh", 400.0, channel="pv_production"
+        )
+    )
+    # Consumer sub-meters (notice 500 + 300 = 800 > grid_import 750, valid because PV adds 250!)
     rows.extend(
         _make_full_day_rows(day, "MP-BLDG", "electricity", "kWh", 500.0, peak_power_kw=28.0)
     )
@@ -134,6 +168,18 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
     rows.extend(
         _make_full_day_rows(day, "MP-SCHOOL", "electricity", "kWh", 300.0, peak_power_kw=18.0)
     )
+    # Standalone full feed-in PV plant
+    rows.extend(
+        _make_full_day_rows(
+            day, "MP-PV-SOLO", "electricity", "kWh", 600.0, channel="pv_production"
+        )
+    )
+    rows.extend(
+        _make_full_day_rows(
+            day, "MP-PV-SOLO", "electricity", "kWh", 600.0, channel="grid_export"
+        )
+    )
+    # Water meter
     rows.extend(_make_full_day_rows(day, "MP-WATER-1", "water", "m3", 48.0))
 
     store = ParquetMeasurementStore(data_dir / "parquet")
@@ -180,19 +226,38 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
     )
     assert test_proc.returncode == 0, f"dbt test failed:\n{test_proc.stdout}\n{test_proc.stderr}"
 
-    # Verify exact multi-level mixed-class arithmetic and derived meter levels in marts
+    # Verify consumption mart, PV summary mart, and meter tree depths
     with duckdb.connect(str(duckdb_path), read_only=True) as con:
         q_rows = con.execute(
             """
             select
                 object_id,
                 energy_carrier,
-                object_class,
+                "group",
+                sub_group,
                 allocation_type,
                 round(total_consumption, 4) as total_consumption
             from mart_quarterly_consumption
             where year_quarter = '2026-Q1'
             order by energy_carrier, object_id
+            """
+        ).fetchall()
+
+        pv_rows = con.execute(
+            """
+            select
+                site_metering_point_id,
+                plant_mode,
+                pv_production_kwh,
+                grid_export_kwh,
+                grid_import_kwh,
+                self_consumption_kwh,
+                total_site_consumption_kwh,
+                self_consumption_rate_pct,
+                autarky_rate_pct
+            from mart_quarterly_pv_summary
+            where year_quarter = '2026-Q1'
+            order by site_metering_point_id
             """
         ).fetchall()
 
@@ -205,31 +270,56 @@ def test_end_to_end_mixed_class_meter_tree_and_dbt_marts(tmp_path: Path) -> None
             """
         ).fetchall()
 
-    results = {(r[0], r[1]): (r[2], r[3], r[4]) for r in q_rows}
+    results = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in q_rows}
+    # Standalone PV generator must NOT appear as a consumer
+    assert ("OBJ-SOLAR-PARK", "electricity") not in results
     assert results[("OBJ-STREETLIGHTS", "electricity")] == (
-        "public_lighting", "residual", pytest.approx(160.0)
+        "Public Lighting", "Center", "residual", pytest.approx(160.0)
     )
     assert results[("OBJ-EV", "electricity")] == (
-        "mobility", "estimated_share", pytest.approx(40.0)
+        "Mobility", "Charging", "estimated_share", pytest.approx(40.0)
     )
     assert results[("OBJ-TOWNHALL", "electricity")] == (
-        "building", "residual", pytest.approx(380.0)
+        "Buildings", "Administration", "residual", pytest.approx(380.0)
     )
     assert results[("OBJ-LIBRARY", "electricity")] == (
-        "building", "measured", pytest.approx(120.0)
+        "Buildings", "Culture", "measured", pytest.approx(120.0)
     )
     assert results[("OBJ-SCHOOL", "electricity")] == (
-        "school", "measured", pytest.approx(300.0)
+        "Education", "Primary Schools", "measured", pytest.approx(300.0)
     )
     assert results[("OBJ-RESERVOIR", "water")] == (
-        "water_supply", "measured", pytest.approx(48.0)
+        "Water Supply", "Reservoirs", "measured", pytest.approx(48.0)
     )
 
-    # Energy conservation: all electricity allocations sum to main meter gross (1000.0)
+    # Energy conservation: total allocated electricity == 750 (import) + 400 (PV) - 150 (export)
     electricity_total = sum(
-        val for (_, carrier), (_, _, val) in results.items() if carrier == "electricity"
+        val for (_, carrier), (_, _, _, val) in results.items() if carrier == "electricity"
     )
     assert electricity_total == pytest.approx(1000.0)
+
+    # Verify PV KPIs for both behind-the-meter and standalone full feed-in plants
+    pv_map = {r[0]: r[1:] for r in pv_rows}
+    assert pv_map["MP-TOWN-MAIN"] == (
+        "self_consumption",
+        pytest.approx(400.0),
+        pytest.approx(150.0),
+        pytest.approx(750.0),
+        pytest.approx(250.0),
+        pytest.approx(1000.0),
+        pytest.approx(62.5),
+        pytest.approx(25.0),
+    )
+    assert pv_map["MP-PV-SOLO"] == (
+        "full_feed_in",
+        pytest.approx(600.0),
+        pytest.approx(600.0),
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+        pytest.approx(0.0),
+        None,
+    )
 
     # Verify automatic recursive tree depth & paths
     tree_map = {r[0]: (r[1], r[2], r[3]) for r in tree_rows}

@@ -6,11 +6,10 @@ from collections import defaultdict
 from datetime import date
 from typing import Any
 
-ALLOWED_OBJECT_CLASSES = frozenset(
-    {"building", "school", "public_lighting", "water_supply", "sports", "mobility", "other"}
-)
 ALLOWED_ENERGY_CARRIERS = frozenset({"electricity", "water", "gas", "heating", "other"})
-ALLOWED_METER_TYPES = frozenset({"smartmeter", "submeter", "manual", "virtual"})
+ALLOWED_METER_TYPES = frozenset(
+    {"smartmeter", "submeter", "manual", "virtual", "pv_production"}
+)
 
 
 class RoundtripValidationError(ValueError):
@@ -45,7 +44,7 @@ def validate_masterdata_state(state: dict[str, list[dict[str, Any]]]) -> None:
       - Unique primary keys
       - Foreign key references (objects <-> metering_points <-> estimation_rules)
       - Meter tree integrity: parent exists, no self-parent, matching energy_carrier & unit,
-        and DFS cycle detection (object_class may differ freely across parent & children)
+        and DFS cycle detection (group/sub_group may differ freely across parent & children)
       - Estimation rules: factor in (0, 1], valid_from <= valid_to, and overlapping active
         estimation factors per source_metering_point_id sum <= 1.0
     """
@@ -67,16 +66,9 @@ def validate_masterdata_state(state: dict[str, list[dict[str, Any]]]) -> None:
             errors.append(f"{ctx}: duplicate object_id '{oid}'")
         object_ids.add(oid)
 
-        for req in ("name", "level_1", "level_2"):
+        for req in ("name", "group", "sub_group"):
             if not row.get(req):
                 errors.append(f"{ctx}: '{req}' is required")
-
-        oclass = row.get("object_class")
-        if oclass not in ALLOWED_OBJECT_CLASSES:
-            errors.append(
-                f"{ctx}: invalid object_class {oclass!r} "
-                f"(allowed: {sorted(ALLOWED_OBJECT_CLASSES)})"
-            )
 
         if row.get("active") not in (0, 1):
             errors.append(f"{ctx}: active must be 0 or 1, got {row.get('active')!r}")
@@ -112,6 +104,11 @@ def validate_masterdata_state(state: dict[str, list[dict[str, Any]]]) -> None:
         if mtype not in ALLOWED_METER_TYPES:
             errors.append(
                 f"{ctx}: invalid meter_type {mtype!r} (allowed: {sorted(ALLOWED_METER_TYPES)})"
+            )
+        elif mtype == "pv_production" and carrier != "electricity":
+            errors.append(
+                f"{ctx}: meter_type 'pv_production' requires energy_carrier 'electricity', "
+                f"got {carrier!r}"
             )
 
         if row.get("active") not in (0, 1):
@@ -149,6 +146,13 @@ def validate_masterdata_state(state: dict[str, list[dict[str, Any]]]) -> None:
             errors.append(
                 f"{ctx}: unit ({row.get('unit')!r}) must match parent "
                 f"{parent!r} ({parent_row.get('unit')!r})"
+            )
+        if (
+            parent_row.get("meter_type") == "pv_production"
+            and row.get("meter_type") != "pv_production"
+        ):
+            errors.append(
+                f"{ctx}: consumer meter cannot have pv_production meter {parent!r} as parent"
             )
         adj[parent].append(mpid)
 

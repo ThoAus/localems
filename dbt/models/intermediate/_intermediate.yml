@@ -12,9 +12,11 @@ models:
         tests: [not_null]
   - name: int_interval_measurements
     description: "15-minute interval measurements enriched with recursive meter tree and object metadata."
+  - name: int_pv_interval_balance
+    description: "15-minute PV energy balance per PV-equipped site (production, export, import, self-consumption)."
   - name: int_metering_point_daily
-    description: "Daily metering point rollups aligned to estimation rule validity dates."
+    description: "Daily metering point rollups pivoting electricity flow channels (import, export, pv_production)."
   - name: int_hierarchy_residuals
-    description: "Multi-level direct sub-meter deductions and automatic residual calculations per metering point and day."
+    description: "Multi-level busbar supply (grid import + PV - export), direct sub-meter deductions, and automatic residuals."
   - name: int_object_daily_allocated
-    description: "Daily consumption allocated to objects (across mixed object_class values) via measured, residual, and estimated shares."
+    description: "Daily consumption allocated to objects (across mixed groups) via measured, residual, and estimated shares."

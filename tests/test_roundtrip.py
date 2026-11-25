@@ -19,12 +19,10 @@ def _populate_workbook(xlsx_path: Path) -> None:
     wb = openpyxl.load_workbook(xlsx_path)
 
     ws_obj = wb["objects"]
-    ws_obj.append(
-        ["OBJ-LIGHTS", "Town Center Streetlights", "public_lighting", "Infra", "Lighting", 1, None]
-    )
-    ws_obj.append(["OBJ-TOWNHALL", "Town Hall", "building", "Admin", "Core", 1, None])
-    ws_obj.append(["OBJ-SCHOOL", "Primary School", "school", "Education", "Schools", 1, None])
-    ws_obj.append(["OBJ-EV", "Public EV Charger", "mobility", "Infra", "Charging", 1, "Estimated"])
+    ws_obj.append(["OBJ-LIGHTS", "Town Center Streetlights", "Public Lighting", "Center", 1, None])
+    ws_obj.append(["OBJ-TOWNHALL", "Town Hall", "Buildings", "Administration", 1, None])
+    ws_obj.append(["OBJ-SCHOOL", "Primary School", "Education", "Schools", 1, None])
+    ws_obj.append(["OBJ-EV", "Public EV Charger", "Mobility", "Charging", 1, "Estimated"])
 
     ws_mp = wb["metering_points"]
     # Intentionally add child before parent to verify order-independent topological insert!
@@ -108,9 +106,10 @@ def test_full_roundtrip_tree_helpers_auto_rule_id_diff_backup_and_soft_delete(
     # 3. Edit one cell + remove estimation rule -> column diff update + soft-delete (active=0)
     wb = openpyxl.load_workbook(xlsx_path)
     ws_obj = wb["objects"]
+    # Columns: object_id (1), name (2), group (3), sub_group (4), active (5), notes (6)
     for row in range(2, ws_obj.max_row + 1):
         if ws_obj.cell(row=row, column=1).value == "OBJ-SCHOOL":
-            ws_obj.cell(row=row, column=5, value="Primary")
+            ws_obj.cell(row=row, column=4, value="Primary")
 
     ws_est = wb["estimation_rules"]
     for row in range(2, ws_est.max_row + 1):
@@ -125,7 +124,7 @@ def test_full_roundtrip_tree_helpers_auto_rule_id_diff_backup_and_soft_delete(
     upd = res.diffs["objects"].updates[0]
     assert upd.key == "OBJ-SCHOOL"
     assert len(upd.changes) == 1
-    assert upd.changes[0].field == "level_2"
+    assert upd.changes[0].field == "sub_group"
     assert upd.changes[0].old_value == "Schools"
     assert upd.changes[0].new_value == "Primary"
 
@@ -146,9 +145,9 @@ def test_roundtrip_rejects_cycles_carrier_mismatch_factor_overflow_and_fks(
 
     wb = openpyxl.load_workbook(xlsx_path)
     ws_obj = wb["objects"]
-    ws_obj.append(["O1", "Obj 1", "building", "L1", "L2", 1, None])
-    ws_obj.append(["O2", "Obj 2", "school", "L1", "L2", 1, None])
-    ws_obj.append(["O3", "Obj 3", "water_supply", "L1", "L2", 1, None])
+    ws_obj.append(["O1", "Obj 1", "Buildings", "Core", 1, None])
+    ws_obj.append(["O2", "Obj 2", "Education", "Schools", 1, None])
+    ws_obj.append(["O3", "Obj 3", "Water Supply", "Reservoirs", 1, None])
 
     ws_mp = wb["metering_points"]
     # Cycle: M1 -> M2 -> M3 -> M1 (parent_metering_point_id links)
@@ -164,6 +163,25 @@ def test_roundtrip_rejects_cycles_carrier_mismatch_factor_overflow_and_fks(
     # Energy carrier & unit mismatch child under M1
     ws_mp.append(
         ["M_BAD", "M1", "O3", "water", "Bad Water Sub", None, "m3", "submeter", 1, None, None, None]
+    )
+    # Invalid PV meter on non-electricity carrier + consumer child under PV meter
+    ws_mp.append(
+        [
+            "MP_PV_BAD", None, "O3", "water", "Water PV",
+            None, "m3", "pv_production", 1, None, None, None,
+        ]
+    )
+    ws_mp.append(
+        [
+            "MP_PV_OK", "M1", "O1", "electricity", "Good PV",
+            None, "kWh", "pv_production", 1, None, None, None,
+        ]
+    )
+    ws_mp.append(
+        [
+            "M_UNDER_PV", "MP_PV_OK", "O2", "electricity", "Bad Child",
+            None, "kWh", "submeter", 1, None, None, None,
+        ]
     )
 
     ws_est = wb["estimation_rules"]
@@ -183,6 +201,8 @@ def test_roundtrip_rejects_cycles_carrier_mismatch_factor_overflow_and_fks(
     assert "cycle detected in meter tree" in msg
     assert "energy_carrier ('water') must match parent 'M1' ('electricity')" in msg
     assert "unit ('m3') must match parent 'M1' ('kWh')" in msg
+    assert "meter_type 'pv_production' requires energy_carrier 'electricity'" in msg
+    assert "consumer meter cannot have pv_production meter 'MP_PV_OK' as parent" in msg
     assert "sum is 1.1000" in msg
     assert "unknown target_object_id 'O_MISSING'" in msg
     assert "valid_to (2026-04-01) is earlier than valid_from (2026-05-01)" in msg
