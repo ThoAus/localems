@@ -107,3 +107,8 @@ This file records all important architectural, technical, and organizational dec
   - Matches `ATTIVA_<POD>_<YYYYMM>.xlsx` (`grid_import`), `ATTIVA_S_<POD>_<YYYYMM>.xlsx` (`grid_export`), and `ATTIVA_<POD>P_<YYYYMM>.xlsx` (`pv_production`).
   - Handles EU summer/winter DST transitions in `Europe/Rome` (`92` intervals on spring-forward 23h day, `96` on normal 24h days while ignoring zero-filled `Ora 25` columns, and `100` distinct UTC intervals using `Ora 25` with `fold=1` on fall-back 25h day).
   - Resolves external POD keys automatically against SQLite `metering_points.external_id` (falling back to the extracted key if not yet registered).
+
+## Project Rename to LocalEMS (`localems`)
+- **Date:** 2026-11-26
+- **Status:** Decided
+- **Description:** Renamed the project from the working title `em_tools` to **LocalEMS** (`localems`) for public open-source release (clear in both English and German as a local-first Energy Management System covering 15-minute utility data, hierarchical meter trees, quarterly reporting, PV analytics, and future standardized reports & PV simulations). Renamed the Python package (`src/localems/`), PyPI package & CLI (`localems`), configuration class (`LocalEmsConfig`), environment variables (`LOCALEMS_*`), dbt project/profile (`localems_analytics` / `localems`), DuckDB default filename (`localems.duckdb`), and workbench notebook (`notebooks/localems_workbench.ipynb`).

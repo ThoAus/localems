@@ -8,19 +8,19 @@ from typing import Any
 
 import openpyxl
 
-from em_tools.db.repository import (
+from localems.db.repository import (
     PRIMARY_KEYS,
     TABLE_COLUMNS,
     MasterDataRepository,
     utc_now_iso,
 )
-from em_tools.roundtrip.hashing import (
+from localems.roundtrip.hashing import (
     HASH_COLUMN,
     compute_row_hash,
     normalize_cell,
     normalize_row,
 )
-from em_tools.roundtrip.validator import validate_masterdata_state
+from localems.roundtrip.validator import validate_masterdata_state
 
 
 @dataclass(frozen=True)

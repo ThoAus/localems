@@ -7,8 +7,8 @@ from typing import Any
 
 import polars as pl
 
-from em_tools.readers.base import BaseReader
-from em_tools.schema import normalize_measurements
+from localems.readers.base import BaseReader
+from localems.schema import normalize_measurements
 
 
 class StandardCsvReader(BaseReader):

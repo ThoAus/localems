@@ -14,8 +14,8 @@ import openpyxl
 import polars as pl
 import pytest
 
-from em_tools.cli import main as cli_main
-from em_tools.storage import ParquetMeasurementStore
+from localems.cli import main as cli_main
+from localems.storage import ParquetMeasurementStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DBT_DIR = REPO_ROOT / "dbt"
@@ -193,10 +193,10 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
     sqlite_path = (data_dir / "db" / "masterdata.sqlite").as_posix()
 
     env = os.environ.copy()
-    env["EM_TOOLS_DUCKDB_PATH"] = duckdb_path.as_posix()
-    env["EM_TOOLS_SQLITE_PATH"] = sqlite_path
-    env["EM_TOOLS_PARQUET_GLOB"] = parquet_glob
-    env["EM_TOOLS_DUCKDB_EXT_DIR"] = (REPO_ROOT / ".duckdb_extensions").as_posix()
+    env["LOCALEMS_DUCKDB_PATH"] = duckdb_path.as_posix()
+    env["LOCALEMS_SQLITE_PATH"] = sqlite_path
+    env["LOCALEMS_PARQUET_GLOB"] = parquet_glob
+    env["LOCALEMS_DUCKDB_EXT_DIR"] = (REPO_ROOT / ".duckdb_extensions").as_posix()
 
     dbt_base = [
         sys.executable,

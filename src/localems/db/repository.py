@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from em_tools.db.schema import connect_sqlite, init_database
+from localems.db.schema import connect_sqlite, init_database
 
 TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     "objects": (

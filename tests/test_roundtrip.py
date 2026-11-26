@@ -7,8 +7,8 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from em_tools.db import MasterDataRepository
-from em_tools.roundtrip import (
+from localems.db import MasterDataRepository
+from localems.roundtrip import (
     RoundtripValidationError,
     export_to_editor,
     import_from_editor,

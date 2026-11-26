@@ -10,8 +10,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from em_tools.db.repository import TABLE_COLUMNS, MasterDataRepository
-from em_tools.roundtrip.hashing import HASH_COLUMN, compute_row_hash, normalize_row
+from localems.db.repository import TABLE_COLUMNS, MasterDataRepository
+from localems.roundtrip.hashing import HASH_COLUMN, compute_row_hash, normalize_row
 
 HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
@@ -39,7 +39,7 @@ DROPDOWN_VALIDATIONS: dict[str, dict[str, str]] = {
 }
 
 EDITOR_GUIDE_ROWS = [
-    ("em_tools — Master-Data Roundtrip Workbook", ""),
+    ("LocalEMS — Master-Data Roundtrip Workbook", ""),
     ("Compatible with", "Microsoft Excel and LibreOffice Calc (.xlsx)"),
     (
         "1. Tree hierarchy (metering_points)",

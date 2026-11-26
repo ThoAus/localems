@@ -9,9 +9,9 @@ import openpyxl
 import polars as pl
 import pytest
 
-from em_tools.readers import DEFAULT_REGISTRY, EdynaXlsxReader, StandardCsvReader
-from em_tools.schema import SchemaValidationError, normalize_measurements
-from em_tools.storage import ParquetMeasurementStore
+from localems.readers import DEFAULT_REGISTRY, EdynaXlsxReader, StandardCsvReader
+from localems.schema import SchemaValidationError, normalize_measurements
+from localems.storage import ParquetMeasurementStore
 
 
 def test_normalize_converts_local_time_to_utc_and_adds_optional_columns() -> None:

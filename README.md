@@ -1,6 +1,6 @@
-# em_tools — Energy Data Collection, Meter-Tree Master Data & Quarterly Reporting
+# LocalEMS — Local-First Energy Management System Toolkit
 
-`em_tools` is an installable Python library and analytics toolset for collecting 15-minute energy and infrastructure consumption data (~35,040 intervals/year per metering point), storing it in standardized **Apache Parquet**, managing a self-describing meter tree and estimation rules in **SQLite** via an **Excel/LibreOffice `.xlsx` roundtrip**, and producing validated quarterly reports with **dbt + DuckDB**.
+**LocalEMS** (`localems`) is an installable Python library and analytics toolset for local-first energy management: collecting 15-minute utility and PV consumption data (~35,040 intervals/year per metering point), storing it in standardized **Apache Parquet**, managing a self-describing meter tree and estimation rules in **SQLite** via an **Excel/LibreOffice `.xlsx` roundtrip**, and producing validated quarterly reports and PV KPIs with **dbt + DuckDB**.
 
 > **Living Document:** This file defines the project task, architecture concept, data model, and operational commands. It is kept up to date as the project evolves. Chronological architectural and technical decisions are logged in [steps.md](steps.md).
 
@@ -9,12 +9,12 @@
 ## 1. Task & Requirements
 
 ### Use Case & Scope
-- **Domain:** Standardized storage and quarterly reporting of 15-minute interval data across physical energy carriers (`electricity`, `water`, `gas`, `heating`, `other`) and flexible reporting groups (`group`, `sub_group` on `objects`).
+- **Domain:** Standardized storage, energy management, and quarterly reporting of 15-minute interval data across physical energy carriers (`electricity`, `water`, `gas`, `heating`, `other`), photovoltaic (PV) plants, and flexible reporting groups (`group`, `sub_group` on `objects`).
 - **Decoupled Physical vs. Organizational Model:** Physical subtraction compatibility is governed by `energy_carrier` + `unit` on `metering_points` and Parquet, while reporting groupings (`group`, `sub_group`) live strictly on `objects`. Under one electricity main meter, sub-meters can belong to `Buildings` and `Education` while the automatic residual ("the rest") belongs to `Public Lighting`.
 - **Language Standard:** All project code, schemas, SQLite tables, Parquet columns, dbt models, CLI flags, tests, and documentation use **consistent English** identifiers. Source-specific parsers map any non-English raw provider headers (such as Italian or German export columns) into the canonical English schema at ingestion time.
-- **Cadence:** No real-time requirement; primary focus is **quarterly reporting** (KPIs, recursive meter-tree rollups, automatic residual allocation, plausibility audits, and energy conservation checks).
+- **Cadence:** No real-time requirement; primary focus is **quarterly reporting** (KPIs, recursive meter-tree rollups, automatic residual allocation, PV energy balances, plausibility audits, and energy conservation checks) — plus future standardized reports and PV plant simulation on buildings.
 - **Scale & Storage:** Local directory store (`data/parquet/`), designed for ~10–200 metering points per carrier, partitioned by **`energy_carrier` + `year`**.
-- **Timestamp Convention:** **UTC, interval start** (`timestamp[us, tz=UTC]`, e.g., `00:00:00Z` covers `00:00–00:15`). Naive local timestamps in raw files are converted using `Europe/Rome` (configurable) with DST awareness, and projected back to local reporting time in dbt quarterly models.
+- **Timestamp Convention:** **UTC, interval start** (`timestamp[us, tz=UTC]`, e.g., `00:00:00Z` covers `00:00–00:15`). Naive local timestamps in raw files are converted using `Europe/Rome` (configurable) with exact EU summer/winter DST awareness (`92` / `96` / `100` intervals/day), and projected back to local reporting time in dbt quarterly models.
 
 ---
 
@@ -29,9 +29,9 @@
 +------------+-------------+        |   = main meter, unlimited depth)   |
              |                      | - estimation_rules (valid_from/to) |
              v                      +-----------------+------------------+
-   [ Python: em_tools ]                               ^  export-editor
-   - Modular Readers (Polars)                         v  import-editor
-   - UTC Normalize & Validate              [ .xlsx Roundtrip Workbook ]
+   [ Python: localems ]                               ^  export-editor
+   - Auto-Detecting Readers                           v  import-editor
+   - UTC & DST Normalize                   [ .xlsx Roundtrip Workbook ]
    - Idempotent Parquet Write              (Excel / LibreOffice Calc;
              |                              auto _meter_level & _tree_path,
              v                              auto rule_id, hash/field diff,
@@ -49,9 +49,8 @@
                   +-----------------------------+
                   | DuckDB + dbt (dbt-duckdb)   |
                   | - WITH RECURSIVE meter tree |
-                  | - Automatic residuals +     |
-                  |   estimation allocations    |
-                  | - Quarterly KPI marts       |
+                  | - PV balance & residuals    |
+                  | - Quarterly KPI & PV marts  |
                   | - DQ & conservation tests   |
                   +-----------------------------+
 ```
@@ -64,7 +63,7 @@
 ### B) Master Data Tree & Estimation Rules (SQLite + `.xlsx` Roundtrip)
 - **Single Source of Truth (`data/db/masterdata.sqlite`):**
   - `objects`: `object_id`, `name`, `group`, `sub_group`, `active`, `notes`
-  - `metering_points`: `metering_point_id`, `parent_metering_point_id` (`NULL` = main meter; set = sub-meter of unlimited depth), `object_id` (direct owner for leaf meters, or **automatic residual owner** for parent meters), `energy_carrier`, `name`, `external_id`, `unit`, `meter_type`, `active`, `valid_from`, `valid_to`, `notes`
+  - `metering_points`: `metering_point_id`, `parent_metering_point_id` (`NULL` = main meter; set = sub-meter of unlimited depth), `object_id` (direct owner for leaf meters, or **automatic residual owner** for parent meters), `energy_carrier`, `name`, `external_id`, `unit`, `meter_type` (`smartmeter`, `submeter`, `manual`, `virtual`, `pv_production`), `active`, `valid_from`, `valid_to`, `notes`
   - `estimation_rules`: `rule_id` (auto-assigned), `source_metering_point_id`, `target_object_id`, `factor` `(0, 1]`, `valid_from`, `valid_to`, `active`, `notes`
 - **Roundtrip Workflow (`export_to_editor` ↔ `import_from_editor`):**
   - Exports a formatted `.xlsx` workbook (Excel & LibreOffice Calc) with dropdown validations, read-only auto-computed `_meter_level` & `_tree_path` helpers on `metering_points`, and a managed `_row_hash` column.
@@ -97,7 +96,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | `timestamp` | `timestamp[us, tz=UTC]` | No | Base | UTC interval start (e.g., `00:00Z` covers `00:00–00:15`). |
 | `interval_minutes` | `int16` | Yes | Base | Interval width in minutes (`15` default; `null` for irregular manual readings). |
-| `metering_point_id` | `string` | No | Base | Stable metering point ID (e.g., POD or internal ID). |
+| `metering_point_id` | `string` | No | Base | Stable metering point ID (e.g., internal ID or POD). |
 | `object_id` | `string` | Yes | Base | Optional object ID (SQLite `metering_points.object_id` is authoritative in dbt). |
 | `energy_carrier` | `string` | No | Base | Physical carrier: `electricity`, `water`, `gas`, `heating`, `other`. |
 | `channel` | `string` | No | Base | Flow/register: `consumption`, `grid_import`, `grid_export`, or `pv_production`. |
@@ -117,43 +116,45 @@
 ## 4. Project Structure
 
 ```text
-em_tools/
+localems/
 ├── pyproject.toml                  # PEP 621 package metadata, dependencies & CLI entrypoint
 ├── README.md                       # Task, architecture & usage guide (this file)
 ├── steps.md                        # Chronological decision log
 ├── .gitignore
 ├── src/
-│   └── em_tools/
+│   └── localems/
 │       ├── __init__.py             # Public library API
 │       ├── config.py               # Workspace paths & timezone configuration
 │       ├── schema.py               # Canonical Polars/Arrow schema & validation
 │       ├── storage.py              # Partitioned Parquet store (energy_carrier/year) + dedup
-│       ├── cli.py                  # `em-tools` CLI
+│       ├── ingest.py               # Auto-detecting file & folder ingestion pipeline
+│       ├── cli.py                  # `localems` CLI
 │       ├── db/
 │       │   ├── schema.py           # SQLite DDL (objects, metering_points tree, estimation_rules)
-│       │   └── repository.py       # SQLite access & online backups
+│       │   └── repository.py       # SQLite access, external_id lookup & online backups
 │       ├── roundtrip/
 │       │   ├── hashing.py          # Cell normalization & deterministic row hashes
 │       │   ├── validator.py        # FK, carrier/unit match, factor overlap & tree cycle checks
 │       │   ├── exporter.py         # export_to_editor (.xlsx + _meter_level/_tree_path helpers)
 │       │   └── importer.py         # import_from_editor (diff, soft-delete, backup, commit)
 │       └── readers/
-│           ├── base.py             # BaseReader ABC
-│           ├── registry.py         # Reader registry
+│           ├── base.py             # BaseReader ABC (with `can_read` filename matching)
+│           ├── registry.py         # Reader registry & `detect()` auto-dispatcher
 │           ├── csv_standard.py     # Generic tidy CSV reader
-│           └── edyna.py            # Edyna 15-min XLSX (date + 96 columns) reader
+│           └── edyna.py            # Edyna 15-min XLSX reader (ATTIVA_*.xlsx + EU DST)
 ├── dbt/
 │   ├── dbt_project.yml
 │   ├── profiles.yml                # DuckDB profile attaching SQLite + reading Parquet
 │   ├── models/
 │   │   ├── staging/                # stg_measurements, stg_objects, stg_metering_points, stg_estimation_rules
-│   │   ├── intermediate/           # int_metering_point_tree (recursive), int_hierarchy_residuals, ...
-│   │   └── marts/                  # mart_quarterly_consumption, mart_plausibility_summary
-│   └── tests/                      # 6 custom DQ & conservation SQL tests
+│   │   ├── intermediate/           # int_metering_point_tree, int_pv_interval_balance, int_hierarchy_residuals, ...
+│   │   └── marts/                  # mart_quarterly_consumption, mart_quarterly_pv_summary, mart_plausibility_summary
+│   └── tests/                      # 7 custom DQ, PV plausibility & conservation SQL tests
 ├── notebooks/
-│   └── em_tools_workbench.ipynb    # Interactive chapter-by-chapter workbench notebook
+│   └── localems_workbench.ipynb    # Interactive chapter-by-chapter workbench notebook
 └── tests/
     ├── test_storage_and_readers.py
+    ├── test_edyna_and_auto_ingest.py
     ├── test_roundtrip.py
     └── test_dbt_pipeline.py
 ```
@@ -169,52 +170,52 @@ em_tools/
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 
-# Install em_tools with dbt-duckdb and pytest/ruff
+# Install localems with dbt-duckdb and pytest/ruff
 pip install -e ".[analytics,dev]"
 ```
 
 ### 1. Initialize Workspace & SQLite Database
 
 ```powershell
-em-tools init
+localems init
 ```
 
 ### 2. Master-Data Roundtrip (SQLite ↔ `.xlsx`)
 
 ```powershell
 # Export SQLite master data to data/editor/masterdata_roundtrip.xlsx
-em-tools export-editor
+localems export-editor
 
 # Preview diff & validate without modifying SQLite
-em-tools import-editor data/editor/masterdata_roundtrip.xlsx --dry-run
+localems import-editor data/editor/masterdata_roundtrip.xlsx --dry-run
 
 # Validate, create automatic backup, and commit changes to SQLite
-em-tools import-editor data/editor/masterdata_roundtrip.xlsx
+localems import-editor data/editor/masterdata_roundtrip.xlsx
 ```
 
 ### 3. Ingest Measurement Files into Parquet (Auto-Detected by Filename)
 
 ```powershell
 # List available readers
-em-tools readers
+localems readers
 
 # Auto-ingest an entire folder (detects reader & channel by filename, resolves external_id via SQLite)
-em-tools ingest data/raw
+localems ingest data/raw
 
 # Auto-ingest a single Edyna file (ATTIVA_<POD>_YYYYMM.xlsx, ATTIVA_S_<POD>_YYYYMM.xlsx, ATTIVA_<POD>P_YYYYMM.xlsx)
-em-tools ingest data/raw/ATTIVA_IT005E00143758_202601.xlsx
+localems ingest data/raw/ATTIVA_IT005E00143758_202601.xlsx
 
 # Explicit reader for generic CSV files (e.g., water meter)
-em-tools ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --decimal-comma --energy-carrier water --unit m3 --metering-point-id MP-WATER-01
+localems ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --decimal-comma --energy-carrier water --unit m3 --metering-point-id MP-WATER-01
 ```
 
 ### 4. Run dbt Transformations, Data Quality Tests & Quarterly Reports
 
 ```powershell
-# Build staging, recursive tree & residual intermediate models, and quarterly marts
+# Build staging, recursive tree, PV balance, residuals, and quarterly marts
 dbt run --project-dir dbt --profiles-dir dbt
 
-# Run schema & custom data quality tests (including energy conservation per root meter)
+# Run schema & custom data quality tests (including PV plausibility & energy conservation)
 dbt test --project-dir dbt --profiles-dir dbt
 ```
 
@@ -227,7 +228,7 @@ ruff check src tests
 
 ### 6. Interactive Jupyter Workbench
 
-Open [notebooks/em_tools_workbench.ipynb](notebooks/em_tools_workbench.ipynb) in VS Code or JupyterLab to run all workflows interactively (workspace setup, SQLite ↔ `.xlsx` roundtrip, per-format Parquet ingestion, Parquet/DuckDB inspection, `dbt run` / `dbt test`, quarterly mart queries, and an optional mixed-class sandbox demo generator).
+Open [notebooks/localems_workbench.ipynb](notebooks/localems_workbench.ipynb) in VS Code or JupyterLab to run all workflows interactively (workspace setup, SQLite ↔ `.xlsx` roundtrip, auto-detecting Parquet ingestion, Parquet/DuckDB inspection, `dbt run` / `dbt test`, quarterly & PV mart queries, and an optional sandbox demo generator).
 
 ```powershell
 # Optional: install JupyterLab / ipykernel support

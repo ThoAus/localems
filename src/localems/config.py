@@ -1,4 +1,4 @@
-"""Runtime configuration and directory paths for em_tools."""
+"""Runtime configuration and directory paths for LocalEMS."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
-class EmToolsConfig(BaseModel):
-    """Centralized path and behavior configuration for an em_tools workspace."""
+class LocalEmsConfig(BaseModel):
+    """Centralized path and behavior configuration for a LocalEMS workspace."""
 
     data_dir: Path = Field(default=Path("data"))
     default_timezone: str = Field(
@@ -58,11 +58,11 @@ class EmToolsConfig(BaseModel):
             path.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def from_env(cls, data_dir: Path | str | None = None) -> EmToolsConfig:
-        """Build configuration from explicit override or EM_TOOLS_DATA_DIR env var."""
+    def from_env(cls, data_dir: Path | str | None = None) -> LocalEmsConfig:
+        """Build configuration from explicit override or LOCALEMS_DATA_DIR env var."""
         if data_dir is not None:
             resolved = Path(data_dir)
         else:
-            resolved = Path(os.environ.get("EM_TOOLS_DATA_DIR", "data"))
-        tz = os.environ.get("EM_TOOLS_TIMEZONE", "Europe/Rome")
+            resolved = Path(os.environ.get("LOCALEMS_DATA_DIR", "data"))
+        tz = os.environ.get("LOCALEMS_TIMEZONE", "Europe/Rome")
         return cls(data_dir=resolved, default_timezone=tz)

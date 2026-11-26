@@ -9,7 +9,7 @@ from pathlib import Path
 import polars as pl
 import pyarrow.parquet as pq
 
-from em_tools.schema import (
+from localems.schema import (
     DEDUP_KEY_COLUMNS,
     MEASUREMENT_ARROW_SCHEMA,
     MEASUREMENT_POLARS_SCHEMA,

@@ -17,7 +17,7 @@ with raw_parquet as (
         source,
         ingested_at
     from read_parquet(
-        '{{ env_var("EM_TOOLS_PARQUET_GLOB", "../data/parquet/energy_carrier=*/year=*/*.parquet") }}',
+        '{{ env_var("LOCALEMS_PARQUET_GLOB", "../data/parquet/energy_carrier=*/year=*/*.parquet") }}',
         hive_partitioning = false
     )
 ),

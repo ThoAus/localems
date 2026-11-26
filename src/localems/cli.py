@@ -1,4 +1,4 @@
-"""Command-line interface for em_tools (init, ingest, export-editor, import-editor)."""
+"""Command-line interface for LocalEMS (init, ingest, export-editor, import-editor)."""
 
 from __future__ import annotations
 
@@ -8,26 +8,26 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from em_tools.config import EmToolsConfig
-from em_tools.db.repository import MasterDataRepository
-from em_tools.ingest import ingest_directory, ingest_file
-from em_tools.readers.registry import DEFAULT_REGISTRY
-from em_tools.roundtrip import RoundtripValidationError, export_to_editor, import_from_editor
+from localems.config import LocalEmsConfig
+from localems.db.repository import MasterDataRepository
+from localems.ingest import ingest_directory, ingest_file
+from localems.readers.registry import DEFAULT_REGISTRY
+from localems.roundtrip import RoundtripValidationError, export_to_editor, import_from_editor
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="em-tools",
+        prog="localems",
         description=(
-            "Energy consumption ingestion (Parquet), SQLite master-data roundtrip (.xlsx), "
-            "and quarterly reporting toolkit."
+            "LocalEMS: 15-minute utility ingestion (Parquet), SQLite master-data roundtrip "
+            "(.xlsx), and quarterly energy reporting toolkit."
         ),
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=None,
-        help="Workspace data directory (default: EM_TOOLS_DATA_DIR or ./data).",
+        help="Workspace data directory (default: LOCALEMS_DATA_DIR or ./data).",
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -120,7 +120,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    cfg = EmToolsConfig.from_env(args.data_dir)
+    cfg = LocalEmsConfig.from_env(args.data_dir)
 
     if args.command == "init":
         cfg.ensure_directories()

@@ -7,7 +7,7 @@ import json
 from datetime import date, datetime
 from typing import Any
 
-from em_tools.db.repository import TABLE_COLUMNS
+from localems.db.repository import TABLE_COLUMNS
 
 HASH_COLUMN = "_row_hash"
 

@@ -26,9 +26,9 @@ from zoneinfo import ZoneInfo
 import openpyxl
 import polars as pl
 
-from em_tools.db.repository import MasterDataRepository
-from em_tools.readers.base import BaseReader
-from em_tools.schema import normalize_measurements
+from localems.db.repository import MasterDataRepository
+from localems.readers.base import BaseReader
+from localems.schema import normalize_measurements
 
 QUARTER_HOUR_SLOTS: tuple[tuple[int, int], ...] = tuple(
     (h, m) for h, m in itertools.product(range(24), (0, 15, 30, 45))

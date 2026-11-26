@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "em-tools"
+name = "localems"
 version = "0.1.0"
-description = "Toolset for 15-minute energy consumption ingestion (Parquet), SQLite master-data roundtrip (.xlsx), and quarterly reporting (dbt-duckdb)."
+description = "Local-first Energy Management System toolkit: 15-minute utility data (Parquet), hierarchical meter tree & master-data roundtrip (SQLite <-> .xlsx), quarterly reporting (dbt-duckdb), and PV analytics."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -31,10 +31,10 @@ notebook = [
 ]
 
 [project.scripts]
-em-tools = "em_tools.cli:main"
+localems = "localems.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/em_tools"]
+packages = ["src/localems"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

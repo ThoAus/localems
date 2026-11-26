@@ -9,18 +9,18 @@ import openpyxl
 import polars as pl
 import pytest
 
-from em_tools import (
+from localems import (
     DEFAULT_REGISTRY,
     EdynaXlsxReader,
-    EmToolsConfig,
+    LocalEmsConfig,
     MasterDataRepository,
     ParquetMeasurementStore,
     export_to_editor,
     import_from_editor,
     ingest_directory,
 )
-from em_tools.cli import main as cli_main
-from em_tools.readers.edyna import parse_edyna_filename
+from localems.cli import main as cli_main
+from localems.readers.edyna import parse_edyna_filename
 
 
 def _edyna_headers_100() -> list[str]:
@@ -134,7 +134,7 @@ def test_edyna_dst_handling_normal_24h_spring_23h_and_autumn_25h(tmp_path: Path)
 
 
 def test_auto_ingest_directory_resolves_external_ids_from_sqlite(tmp_path: Path) -> None:
-    cfg = EmToolsConfig(data_dir=tmp_path / "data", default_timezone="Europe/Rome")
+    cfg = LocalEmsConfig(data_dir=tmp_path / "data", default_timezone="Europe/Rome")
     cfg.ensure_directories()
 
     # Register internal metering_point_ids mapped to external POD IT999E00000001

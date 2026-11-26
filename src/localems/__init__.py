@@ -1,31 +1,31 @@
-"""em_tools: Energy consumption ingestion, master-data roundtrip, and reporting toolkit."""
+"""LocalEMS: Local-first Energy Management System toolkit (Parquet, SQLite/.xlsx, dbt-duckdb)."""
 
-from em_tools.config import EmToolsConfig
-from em_tools.db import MasterDataRepository, init_database
-from em_tools.ingest import IngestBatchResult, IngestFileResult, ingest_directory, ingest_file
-from em_tools.readers import DEFAULT_REGISTRY, BaseReader, EdynaXlsxReader, StandardCsvReader
-from em_tools.roundtrip import (
+from localems.config import LocalEmsConfig
+from localems.db import MasterDataRepository, init_database
+from localems.ingest import IngestBatchResult, IngestFileResult, ingest_directory, ingest_file
+from localems.readers import DEFAULT_REGISTRY, BaseReader, EdynaXlsxReader, StandardCsvReader
+from localems.roundtrip import (
     ImportReport,
     RoundtripValidationError,
     export_to_editor,
     import_from_editor,
 )
-from em_tools.schema import (
+from localems.schema import (
     MEASUREMENT_ARROW_SCHEMA,
     MEASUREMENT_POLARS_SCHEMA,
     SchemaValidationError,
     normalize_measurements,
 )
-from em_tools.storage import ParquetMeasurementStore, WriteSummary
+from localems.storage import ParquetMeasurementStore, WriteSummary
 
 __all__ = [
     "BaseReader",
     "DEFAULT_REGISTRY",
     "EdynaXlsxReader",
-    "EmToolsConfig",
     "ImportReport",
     "IngestBatchResult",
     "IngestFileResult",
+    "LocalEmsConfig",
     "MEASUREMENT_ARROW_SCHEMA",
     "MEASUREMENT_POLARS_SCHEMA",
     "MasterDataRepository",

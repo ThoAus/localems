@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from em_tools.readers.base import BaseReader
-from em_tools.readers.csv_standard import StandardCsvReader
-from em_tools.readers.edyna import EdynaXlsxReader
+from localems.readers.base import BaseReader
+from localems.readers.csv_standard import StandardCsvReader
+from localems.readers.edyna import EdynaXlsxReader
 
 
 class ReaderRegistry:

@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from em_tools.config import EmToolsConfig
-from em_tools.readers.registry import DEFAULT_REGISTRY, ReaderRegistry
-from em_tools.storage import ParquetMeasurementStore
+from localems.config import LocalEmsConfig
+from localems.readers.registry import DEFAULT_REGISTRY, ReaderRegistry
+from localems.storage import ParquetMeasurementStore
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ def _is_ignorable_file(path: Path) -> bool:
 def ingest_file(
     path: Path | str,
     *,
-    config: EmToolsConfig,
+    config: LocalEmsConfig,
     reader_name: str | None = None,
     registry: ReaderRegistry = DEFAULT_REGISTRY,
     **reader_kwargs: Any,
@@ -107,7 +107,7 @@ def ingest_file(
 def ingest_directory(
     directory: Path | str,
     *,
-    config: EmToolsConfig,
+    config: LocalEmsConfig,
     recursive: bool = False,
     registry: ReaderRegistry = DEFAULT_REGISTRY,
     **reader_kwargs: Any,
