@@ -10,6 +10,8 @@ select
     r.report_year,
     r.report_quarter,
     r.year_quarter,
+    cast(extract(month from r.local_date) as integer) as report_month,
+    strftime(r.local_date, '%Y-%m') as year_month,
     r.energy_carrier,
     r.metering_point_id,
     r.meter_level,
@@ -45,6 +47,8 @@ group by
     r.report_year,
     r.report_quarter,
     r.year_quarter,
+    cast(extract(month from r.local_date) as integer),
+    strftime(r.local_date, '%Y-%m'),
     r.energy_carrier,
     r.metering_point_id,
     r.meter_level,
@@ -57,7 +61,6 @@ group by
     o.sub_group,
     r.unit
 order by
-    r.report_year,
-    r.report_quarter,
+    year_month,
     r.energy_carrier,
     r.tree_path

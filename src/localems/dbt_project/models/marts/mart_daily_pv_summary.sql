@@ -7,9 +7,12 @@ objects as (
 )
 
 select
+    p.local_date,
     p.report_year,
     p.report_quarter,
     p.year_quarter,
+    cast(extract(month from p.local_date) as integer) as report_month,
+    strftime(p.local_date, '%Y-%m') as year_month,
     p.site_metering_point_id,
     p.plant_mode,
     p.object_id,
@@ -30,15 +33,17 @@ select
         100.0 * sum(p.self_consumption_kwh) / nullif(sum(p.total_site_consumption_kwh), 0),
         2
     ) as autarky_rate_pct,
-    sum(case when p.is_export_exceeding_production then 1 else 0 end) as export_exceeds_production_intervals,
-    count(distinct p.local_date) as active_days
+    sum(case when p.is_export_exceeding_production then 1 else 0 end) as export_exceeds_production_intervals
 from pv p
 left join objects o
     on p.object_id = o.object_id
 group by
+    p.local_date,
     p.report_year,
     p.report_quarter,
     p.year_quarter,
+    cast(extract(month from p.local_date) as integer),
+    strftime(p.local_date, '%Y-%m'),
     p.site_metering_point_id,
     p.plant_mode,
     p.object_id,
@@ -47,6 +52,5 @@ group by
     o.sub_group,
     p.unit
 order by
-    p.report_year,
-    p.report_quarter,
+    p.local_date,
     p.site_metering_point_id

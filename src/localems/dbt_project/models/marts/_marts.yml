@@ -1,0 +1,68 @@
+version: 2
+
+models:
+  - name: mart_daily_consumption
+    description: "Materialized daily consumption fact table by energy carrier, group, sub_group, object, and allocation type."
+    columns:
+      - name: local_date
+        tests: [not_null]
+      - name: year_month
+        tests: [not_null]
+      - name: energy_carrier
+        tests: [not_null]
+      - name: object_id
+        tests: [not_null]
+      - name: total_consumption
+        tests: [not_null]
+
+  - name: mart_monthly_consumption
+    description: "Monthly consumption view derived from mart_daily_consumption (no SQLite ATTACH required)."
+    columns:
+      - name: year_month
+        tests: [not_null]
+      - name: energy_carrier
+        tests: [not_null]
+      - name: object_id
+        tests: [not_null]
+      - name: total_consumption
+        tests: [not_null]
+
+  - name: mart_daily_pv_summary
+    description: "Materialized daily PV production, grid feed-in, grid import, self-consumption, and autarky table per PV site."
+    columns:
+      - name: local_date
+        tests: [not_null]
+      - name: year_month
+        tests: [not_null]
+      - name: site_metering_point_id
+        tests: [not_null]
+      - name: plant_mode
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["self_consumption", "full_feed_in"]
+
+  - name: mart_monthly_pv_summary
+    description: "Monthly PV summary view derived from mart_daily_pv_summary (exact weighted rates, no SQLite ATTACH required)."
+    columns:
+      - name: year_month
+        tests: [not_null]
+      - name: site_metering_point_id
+        tests: [not_null]
+      - name: plant_mode
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["self_consumption", "full_feed_in"]
+
+  - name: mart_plausibility_summary
+    description: "Monthly data quality, meter tree depth, interval completeness, PV balance, and residual scorecard."
+    columns:
+      - name: year_month
+        tests: [not_null]
+      - name: metering_point_id
+        tests: [not_null]
+      - name: meter_level
+        tests: [not_null]

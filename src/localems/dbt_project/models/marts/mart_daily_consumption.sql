@@ -7,9 +7,12 @@ objects as (
 )
 
 select
+    a.local_date,
     a.report_year,
     a.report_quarter,
     a.year_quarter,
+    cast(extract(month from a.local_date) as integer) as report_month,
+    strftime(a.local_date, '%Y-%m') as year_month,
     a.energy_carrier,
     o."group",
     o.sub_group,
@@ -22,14 +25,17 @@ select
     avg(a.avg_flow_rate) as avg_flow_rate,
     avg(a.avg_pressure_bar) as avg_pressure_bar,
     sum(coalesce(a.total_burn_duration_min, 0.0)) as total_burn_duration_min,
-    count(distinct a.local_date) as active_days
+    sum(a.interval_count) as interval_count
 from allocated a
 left join objects o
     on a.object_id = o.object_id
 group by
+    a.local_date,
     a.report_year,
     a.report_quarter,
     a.year_quarter,
+    cast(extract(month from a.local_date) as integer),
+    strftime(a.local_date, '%Y-%m'),
     a.energy_carrier,
     o."group",
     o.sub_group,
@@ -38,8 +44,7 @@ group by
     a.unit,
     a.allocation_type
 order by
-    a.report_year,
-    a.report_quarter,
+    a.local_date,
     a.energy_carrier,
     o."group",
     o.sub_group,

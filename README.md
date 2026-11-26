@@ -78,15 +78,18 @@
 - **PV Energy Balance:** Bidirectional grid meters share one `metering_point_id` with channels `grid_import` and `grid_export`; behind-the-meter PV generators use `meter_type = 'pv_production'` linked via `parent_metering_point_id` (or `NULL` for standalone full feed-in plants). For any PV-equipped site:
   - `self_consumption = pv_production - grid_export`
   - `total_site_supply = grid_import + pv_production - grid_export` (used before deducting consumer sub-meters, preventing false negative residuals on sunny days).
-- **Layers (`dbt/models/`):**
+- **Layers (`src/localems/dbt_project/models/`):**
   - `staging`: `stg_measurements`, `stg_objects`, `stg_metering_points`, `stg_estimation_rules`
   - `intermediate`:
     - `int_metering_point_tree` (`WITH RECURSIVE` deriving `meter_level`, `is_main_meter`, `root_metering_point_id`, `tree_path` with unlimited depth)
     - `int_interval_measurements`, `int_pv_interval_balance` (15-min PV balance), `int_metering_point_daily`
     - `int_hierarchy_residuals` (busbar supply + direct-children subtraction at every node — zero double counting — plus automatic residual calculation and negative-residual detection)
     - `int_object_daily_allocated` (combines `measured`, `residual`, and `estimated_share` rows across mixed `group` / `sub_group` targets)
-  - `marts`: `mart_quarterly_consumption`, `mart_quarterly_pv_summary` (production, feed-in, grid import, self-consumption rate, autarky rate), `mart_plausibility_summary`
-- **Data Quality Tests (`dbt/tests/`):** duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, DST-aware active-day 15-minute completeness (`92 / 96 / 100`), **15-minute PV export vs. production plausibility**, and **per-root energy conservation** (`sum(subtree allocations) == root_grid_import - root_grid_export + subtree_pv_production`).
+  - `marts`:
+    - Materialized tables: `mart_daily_consumption`, `mart_daily_pv_summary`, `mart_plausibility_summary`
+    - Convenience views (zero `ATTACH` needed): `mart_monthly_consumption`, `mart_monthly_pv_summary`
+  - **Standardized Query & Export Layer (`EnergyReporter` & `localems report`):** Roll up `mart_daily_*` to `day` / `month` / `quarter` / `year` / `total`, group by `group` / `sub_group` / `object` / `allocation_type`, filter single or multiple groups/sub-groups, pivot wide tables, query raw 15-min intervals per meter, and export directly to `.csv` or `.xlsx`.
+- **Data Quality Tests (`src/localems/dbt_project/tests/`):** duplicate intervals, negative consumptions, negative parent residuals, estimation factor bounds, DST-aware active-day 15-minute completeness (`92 / 96 / 100`), **15-minute PV export vs. production plausibility**, and **per-root energy conservation** (`sum(subtree allocations) == root_grid_import - root_grid_export + subtree_pv_production`).
 
 ---
 
@@ -124,11 +127,13 @@ localems/
 ├── src/
 │   └── localems/
 │       ├── __init__.py             # Public library API
+│       ├── analytics.py            # Bundled dbt-duckdb runner (`run_dbt`, `get_dbt_project_dir`)
+│       ├── reporting.py            # Standardized query & export API (`EnergyReporter`, `export_dataframe`)
 │       ├── config.py               # Workspace paths & timezone configuration
 │       ├── schema.py               # Canonical Polars/Arrow schema & validation
 │       ├── storage.py              # Partitioned Parquet store (energy_carrier/year) + dedup
 │       ├── ingest.py               # Auto-detecting file & folder ingestion pipeline
-│       ├── cli.py                  # `localems` CLI
+│       ├── cli.py                  # `localems` CLI (`init`, `export-editor`, `import-editor`, `ingest`, `dbt`, `report`)
 │       ├── db/
 │       │   ├── schema.py           # SQLite DDL (objects, metering_points tree, estimation_rules)
 │       │   └── repository.py       # SQLite access, external_id lookup & online backups
@@ -137,19 +142,19 @@ localems/
 │       │   ├── validator.py        # FK, carrier/unit match, factor overlap & tree cycle checks
 │       │   ├── exporter.py         # export_to_editor (.xlsx + _meter_level/_tree_path helpers)
 │       │   └── importer.py         # import_from_editor (diff, soft-delete, backup, commit)
-│       └── readers/
-│           ├── base.py             # BaseReader ABC (with `can_read` filename matching)
-│           ├── registry.py         # Reader registry & `detect()` auto-dispatcher
-│           ├── csv_standard.py     # Generic tidy CSV reader
-│           └── edyna.py            # Edyna 15-min XLSX reader (ATTIVA_*.xlsx + EU DST)
-├── dbt/
-│   ├── dbt_project.yml
-│   ├── profiles.yml                # DuckDB profile attaching SQLite + reading Parquet
-│   ├── models/
-│   │   ├── staging/                # stg_measurements, stg_objects, stg_metering_points, stg_estimation_rules
-│   │   ├── intermediate/           # int_metering_point_tree, int_pv_interval_balance, int_hierarchy_residuals, ...
-│   │   └── marts/                  # mart_quarterly_consumption, mart_quarterly_pv_summary, mart_plausibility_summary
-│   └── tests/                      # 7 custom DQ, PV plausibility & conservation SQL tests
+│       ├── readers/
+│       │   ├── base.py             # BaseReader ABC (with `can_read` filename matching)
+│       │   ├── registry.py         # Reader registry & `detect()` auto-dispatcher
+│       │   ├── csv_standard.py     # Generic tidy CSV reader
+│       │   └── edyna.py            # Edyna 15-min XLSX reader (ATTIVA_*.xlsx + EU DST)
+│       └── dbt_project/            # Bundled dbt-duckdb project (packaged into wheels)
+│           ├── dbt_project.yml
+│           ├── profiles.yml        # DuckDB profile attaching SQLite + reading Parquet
+│           ├── models/
+│           │   ├── staging/        # stg_measurements, stg_objects, stg_metering_points, stg_estimation_rules
+│           │   ├── intermediate/   # int_metering_point_tree, int_pv_interval_balance, int_hierarchy_residuals, ...
+│           │   └── marts/          # mart_daily_consumption, mart_daily_pv_summary, mart_monthly_* views, mart_plausibility_summary
+│           └── tests/              # 7 custom DQ, PV plausibility & conservation SQL tests
 ├── notebooks/
 │   └── localems_workbench.ipynb    # Interactive chapter-by-chapter workbench notebook
 └── tests/
@@ -163,20 +168,21 @@ localems/
 
 ## 5. Setup & Usage Commands
 
-### Installation (Editable Library + Analytics & Dev Tools)
+### Installation (From Any Workspace Directory)
 
 ```powershell
-# Create virtual environment (Python 3.11+ / 3.12 recommended)
+# Create virtual environment in your data/project directory (Python 3.11+ / 3.12 recommended)
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 
-# Install localems with dbt-duckdb and pytest/ruff
-pip install -e ".[analytics,dev]"
+# Install localems from a local checkout (or use -e ".[analytics,dev]" inside the repo)
+pip install "C:\path\to\localems[analytics]"
 ```
 
 ### 1. Initialize Workspace & SQLite Database
 
 ```powershell
+# Uses ./data by default (override with --data-dir PATH or LOCALEMS_DATA_DIR)
 localems init
 ```
 
@@ -199,8 +205,13 @@ localems import-editor data/editor/masterdata_roundtrip.xlsx
 # List available readers
 localems readers
 
-# Auto-ingest an entire folder (detects reader & channel by filename, resolves external_id via SQLite)
+# Auto-ingest an entire folder (skips same SHA-256 files, resolves external_id via SQLite,
+# writes Parquet in one batch, and moves imported files to data/archive/)
 localems ingest data/raw
+
+# Keep files in place or force re-import even if the same SHA-256 was already imported
+localems ingest data/raw --no-archive
+localems ingest data/archive --force
 
 # Auto-ingest a single Edyna file (ATTIVA_<POD>_YYYYMM.xlsx, ATTIVA_S_<POD>_YYYYMM.xlsx, ATTIVA_<POD>P_YYYYMM.xlsx)
 localems ingest data/raw/ATTIVA_IT005E00143758_202601.xlsx
@@ -213,20 +224,45 @@ localems ingest data/raw/water_q1.csv --reader csv_standard --separator ";" --de
 
 ```powershell
 # Build staging, recursive tree, PV balance, residuals, and quarterly marts
-dbt run --project-dir dbt --profiles-dir dbt
+localems dbt run
 
 # Run schema & custom data quality tests (including PV plausibility & energy conservation)
-dbt test --project-dir dbt --profiles-dir dbt
+localems dbt test
+
+# Or run both in one step (forwards any extra dbt flags such as --select)
+localems dbt build
 ```
 
-### 5. Run Python Test Suite & Linter
+### 5. Query & Export Reports (`localems report` & `EnergyReporter`)
+
+```powershell
+# Monthly consumption of all objects
+localems report consumption --period month
+
+# Roll up by group for electricity in 2026
+localems report consumption --period month --carrier electricity --year 2026 --group-by group
+
+# Filter a single group / sub_group and export a pivoted monthly Excel table
+localems report consumption --period month --group "Buildings" --sub-group "Administration" --pivot -o admin_monthly.xlsx
+
+# Monthly PV KPIs (exact weighted self-consumption & autarky rates)
+localems report pv --period month --year 2026
+
+# Raw 15-minute intervals for one or more meters
+localems report intervals --meter MET-001,MET-002 --year 2026 -o raw_intervals.csv
+
+# List configured groups & sub_groups
+localems report groups
+```
+
+### 6. Run Python Test Suite & Linter
 
 ```powershell
 pytest
 ruff check src tests
 ```
 
-### 6. Interactive Jupyter Workbench
+### 7. Interactive Jupyter Workbench
 
 Open [notebooks/localems_workbench.ipynb](notebooks/localems_workbench.ipynb) in VS Code or JupyterLab to run all workflows interactively (workspace setup, SQLite ↔ `.xlsx` roundtrip, auto-detecting Parquet ingestion, Parquet/DuckDB inspection, `dbt run` / `dbt test`, quarterly & PV mart queries, and an optional sandbox demo generator).
 

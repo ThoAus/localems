@@ -53,6 +53,19 @@ CREATE TABLE IF NOT EXISTS estimation_rules (
     CHECK (valid_to IS NULL OR valid_to >= valid_from)
 );
 
+CREATE TABLE IF NOT EXISTS ingestion_log (
+    ingestion_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_sha256        TEXT NOT NULL,
+    file_name          TEXT NOT NULL,
+    source_path        TEXT NOT NULL,
+    archived_path      TEXT,
+    reader_name        TEXT NOT NULL,
+    metering_point_ids TEXT NOT NULL,
+    channels           TEXT NOT NULL,
+    rows_input         INTEGER NOT NULL,
+    ingested_at        TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_metering_points_parent
     ON metering_points(parent_metering_point_id);
 CREATE INDEX IF NOT EXISTS idx_metering_points_object
@@ -63,6 +76,8 @@ CREATE INDEX IF NOT EXISTS idx_estimation_source
     ON estimation_rules(source_metering_point_id);
 CREATE INDEX IF NOT EXISTS idx_estimation_active
     ON estimation_rules(active, valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_ingestion_log_sha256
+    ON ingestion_log(file_sha256);
 """
 
 

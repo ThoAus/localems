@@ -23,6 +23,7 @@ htmlcov/
 
 # Local project data & runtime artifacts (keep directory structure via .gitkeep if needed)
 data/raw/*
+data/archive/*
 data/parquet/*
 data/db/*.sqlite
 data/db/*.sqlite-*
@@ -40,6 +41,12 @@ dbt/dbt_packages/
 dbt/logs/
 dbt/*.duckdb
 dbt/*.duckdb.wal
+src/localems/dbt_project/target/
+src/localems/dbt_project/dbt_packages/
+src/localems/dbt_project/logs/
+data/.dbt/
+data/.duckdb_extensions/
+.user.yml
 .duckdb_extensions/
 *.duckdb
 *.duckdb.wal

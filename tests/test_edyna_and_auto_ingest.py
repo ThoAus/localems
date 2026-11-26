@@ -18,6 +18,7 @@ from localems import (
     export_to_editor,
     import_from_editor,
     ingest_directory,
+    ingest_file,
 )
 from localems.cli import main as cli_main
 from localems.readers.edyna import parse_edyna_filename
@@ -202,5 +203,102 @@ def test_auto_ingest_directory_resolves_external_ids_from_sqlite(tmp_path: Path)
     assert by_ch["pv_production"][0] == "MP-SCHOOL-PV"
     assert by_ch["pv_production"][1] == pytest.approx(28.8)
 
+    # Verify all 3 imported files were moved into data/archive while notes.txt stayed in data/raw
+    assert batch.moved_count == 3
+    for res in batch.ingested:
+        assert not res.file_path.exists()
+        assert res.archived_path is not None
+        assert res.archived_path.exists()
+        assert res.archived_path.parent == cfg.archive_dir
+    assert (cfg.raw_dir / "notes.txt").exists()
+
+    report_text = batch.format_summary()
+    assert "3 imported (3 moved to archive)" in report_text
+    assert "[IMPORTED + MOVED]" in report_text
+    assert "[SKIP: NO READER] notes.txt" in report_text
+
     # Verify CLI auto-ingest works with zero --reader flag on the directory
     assert cli_main(["--data-dir", str(cfg.data_dir), "ingest", str(cfg.raw_dir)]) == 0
+
+
+def test_ingest_sha256_skip_archive_collision_and_force(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = LocalEmsConfig(data_dir=tmp_path / "data", default_timezone="Europe/Rome")
+    cfg.ensure_directories()
+    repo = MasterDataRepository(cfg.db_path, backups_dir=cfg.backups_dir)
+    repo.init()
+
+    # 1. First import: file is imported, logged in SQLite, and moved to archive
+    src_file = _write_edyna_file(
+        cfg.raw_dir / "ATTIVA_IT999E00000002_202601.xlsx",
+        "IT999E00000002",
+        [("20260101", ["1,000"] * 96, [""] * 4)],
+    )
+    first_bytes = src_file.read_bytes()
+
+    batch1 = ingest_directory(cfg.raw_dir, config=cfg)
+    assert len(batch1.ingested) == 1
+    assert len(batch1.skipped_duplicates) == 0
+    assert not src_file.exists()
+    archived_v1 = cfg.archive_dir / "ATTIVA_IT999E00000002_202601.xlsx"
+    assert archived_v1.exists()
+    assert len(repo.fetch_ingestion_log()) == 1
+
+    # 2. Re-drop byte-identical file into data/raw -> skipped due to same SHA-256
+    dup_file = cfg.raw_dir / "ATTIVA_IT999E00000002_202601.xlsx"
+    dup_file.write_bytes(first_bytes)
+
+    rc = cli_main(["--data-dir", str(cfg.data_dir), "ingest", str(cfg.raw_dir)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "0 imported (0 moved to archive), 1 skipped (same SHA-256)" in out
+    assert "[SKIP: SAME SHA-256] ATTIVA_IT999E00000002_202601.xlsx" in out
+    # Duplicate file left in raw (not overwritten into archive)
+    assert dup_file.exists()
+
+    # 3. Single-file ingest of the same duplicate also skips, while --force re-imports
+    single_skip = ingest_file(dup_file, config=cfg, archive=False)
+    assert single_skip.status == "skipped_duplicate"
+    assert "[SKIP: SAME SHA-256]" in single_skip.format_summary()
+
+    rc_force = cli_main(
+        ["--data-dir", str(cfg.data_dir), "ingest", str(dup_file), "--no-archive", "--force"]
+    )
+    assert rc_force == 0
+    out_force = capsys.readouterr().out
+    assert "[IMPORTED] ATTIVA_IT999E00000002_202601.xlsx" in out_force
+    assert dup_file.exists()  # --no-archive kept it in place
+    dup_file.unlink()
+
+    # 4. Utility sends a REVISED file with the exact same filename (different SHA-256)
+    revised_file = _write_edyna_file(
+        cfg.raw_dir / "ATTIVA_IT999E00000002_202601.xlsx",
+        "IT999E00000002",
+        [("20260101", ["2,500"] * 96, [""] * 4)],
+    )
+    batch_rev = ingest_directory(cfg.raw_dir, config=cfg)
+    assert len(batch_rev.ingested) == 1
+    assert len(batch_rev.skipped_duplicates) == 0
+    assert not revised_file.exists()
+    # Original archive file is preserved and revised version keeps its exact filename
+    # inside archive/revisions/<timestamp>/ so filename auto-detection stays intact
+    assert archived_v1.exists()
+    archived_v2 = batch_rev.ingested[0].archived_path
+    assert archived_v2 is not None
+    assert archived_v2.exists()
+    assert archived_v2 != archived_v1
+    assert archived_v2.name == "ATTIVA_IT999E00000002_202601.xlsx"
+    assert "revisions" in archived_v2.parts
+
+    # Parquet now holds the revised total (96 * 2.5 = 240.0)
+    store = ParquetMeasurementStore(cfg.parquet_dir)
+    df = store.read(energy_carrier="electricity")
+    assert df["value"].sum() == pytest.approx(240.0)
+
+    # 5. Re-ingesting directly from data/archive with --recursive --force rebuilds cleanly
+    #    and never moves already-archived files onto themselves
+    rebuild_batch = ingest_directory(cfg.archive_dir, config=cfg, recursive=True, force=True)
+    assert len(rebuild_batch.ingested) == 2
+    assert rebuild_batch.moved_count == 0
+    assert archived_v1.exists() and archived_v2.exists()

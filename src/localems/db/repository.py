@@ -170,3 +170,94 @@ class MasterDataRepository:
                 (key,),
             ).fetchone()
             return str(row["metering_point_id"]) if row else None
+
+    @staticmethod
+    def _ensure_ingestion_log_table(conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS ingestion_log (
+                ingestion_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_sha256        TEXT NOT NULL,
+                file_name          TEXT NOT NULL,
+                source_path        TEXT NOT NULL,
+                archived_path      TEXT,
+                reader_name        TEXT NOT NULL,
+                metering_point_ids TEXT NOT NULL,
+                channels           TEXT NOT NULL,
+                rows_input         INTEGER NOT NULL,
+                ingested_at        TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_ingestion_log_sha256
+                ON ingestion_log(file_sha256);
+            """
+        )
+
+    def find_ingested_file_by_sha256(self, file_sha256: str) -> dict[str, Any] | None:
+        """Return the most recent ingestion_log record for `file_sha256`, or None."""
+        if not self.db_path.exists():
+            return None
+        with self.connect() as conn:
+            self._ensure_ingestion_log_table(conn)
+            row = conn.execute(
+                "SELECT ingestion_id, file_sha256, file_name, source_path, archived_path, "
+                "reader_name, metering_point_ids, channels, rows_input, ingested_at "
+                "FROM ingestion_log WHERE file_sha256 = ? "
+                "ORDER BY ingestion_id DESC LIMIT 1",
+                (file_sha256,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def record_ingestion(
+        self,
+        *,
+        file_sha256: str,
+        file_name: str,
+        source_path: str,
+        archived_path: str | None,
+        reader_name: str,
+        metering_point_ids: tuple[str, ...],
+        channels: tuple[str, ...],
+        rows_input: int,
+        ingested_at: str | None = None,
+    ) -> int:
+        """Persist an audit entry in `ingestion_log` for SHA-256 skip tracking."""
+        if not self.db_path.exists():
+            self.init()
+        ts = ingested_at or utc_now_iso()
+        with self.connect() as conn:
+            self._ensure_ingestion_log_table(conn)
+            cur = conn.execute(
+                "INSERT INTO ingestion_log ("
+                "file_sha256, file_name, source_path, archived_path, reader_name, "
+                "metering_point_ids, channels, rows_input, ingested_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    file_sha256,
+                    file_name,
+                    source_path,
+                    archived_path,
+                    reader_name,
+                    ",".join(metering_point_ids),
+                    ",".join(channels),
+                    rows_input,
+                    ts,
+                ),
+            )
+            conn.commit()
+            return int(cur.lastrowid)
+
+    def fetch_ingestion_log(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """Return ingestion_log entries ordered newest first."""
+        if not self.db_path.exists():
+            return []
+        with self.connect() as conn:
+            self._ensure_ingestion_log_table(conn)
+            sql = (
+                "SELECT ingestion_id, file_sha256, file_name, source_path, archived_path, "
+                "reader_name, metering_point_ids, channels, rows_input, ingested_at "
+                "FROM ingestion_log ORDER BY ingestion_id DESC"
+            )
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]

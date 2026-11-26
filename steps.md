@@ -112,3 +112,26 @@ This file records all important architectural, technical, and organizational dec
 - **Date:** 2026-11-26
 - **Status:** Decided
 - **Description:** Renamed the project from the working title `em_tools` to **LocalEMS** (`localems`) for public open-source release (clear in both English and German as a local-first Energy Management System covering 15-minute utility data, hierarchical meter trees, quarterly reporting, PV analytics, and future standardized reports & PV simulations). Renamed the Python package (`src/localems/`), PyPI package & CLI (`localems`), configuration class (`LocalEmsConfig`), environment variables (`LOCALEMS_*`), dbt project/profile (`localems_analytics` / `localems`), DuckDB default filename (`localems.duckdb`), and workbench notebook (`notebooks/localems_workbench.ipynb`).
+
+## Bundled dbt Project, `localems dbt` CLI Runner & Windows `tzdata` Dependency
+- **Date:** 2026-11-26
+- **Status:** Decided
+- **Description:** Made `localems` self-contained when installed into any external project directory:
+  1. Moved the `dbt/` project into `src/localems/dbt_project/` so `hatchling` bundles all `.yml` and `.sql` assets directly in wheels and editable installs (`importlib.resources.files("localems") / "dbt_project"`).
+  2. Added `localems.analytics` (`run_dbt`, `build_dbt_env`, `get_dbt_project_dir`) and the `localems dbt <command> [args...]` CLI subcommand, automatically wiring DuckDB, SQLite, Parquet glob, timezone, and dbt `target/` / `logs/` runtime outputs into the configured `--data-dir` workspace while keeping the installed package directory strictly read-only.
+  3. Added `tzdata>=2024.1; sys_platform == 'win32'` to core `dependencies` in `pyproject.toml` so `ZoneInfo("Europe/Rome")` and Polars timezone conversions work out of the box on Windows even without `[analytics]` installed.
+
+## Ingestion Archiving (`data/archive/`), SHA-256 Skip Tracking & Batched Parquet Writes
+- **Date:** 2026-11-26
+- **Status:** Decided
+- **Description:** Upgraded `ingest_file()` / `ingest_directory()` and `localems ingest` for high-volume real-world operation:
+  1. **SHA-256 Audit Log (`ingestion_log` in SQLite):** Computes each file's SHA-256 before parsing and skips files whose exact content was already imported (while automatically re-ingesting revised utility files that share the same filename with changed contents). Overridable via `--force`.
+  2. **Archive Move (`data/archive/`):** After Parquet writes succeed atomically, imported files are moved into `<data-dir>/archive/` keeping original filenames strictly intact (placing revised versions with the same filename into `archive/revisions/<UTC_timestamp>/` so prior archives are never overwritten and filename auto-detection keeps working on rebuilds; files already inside `archive/` are never moved onto themselves; disable with `--no-archive` or redirect with `--archive-dir`).
+  3. **Batched Parquet Writes & Structured Report:** `ingest_directory()` writes all newly parsed files to Parquet once per `(energy_carrier, year)` partition and prints a clear report categorizing `[IMPORTED + MOVED]`, `[IMPORTED]`, `[SKIP: SAME SHA-256]`, and `[SKIP: NO READER]`.
+
+## Daily Base Marts, Monthly Convenience Views & Standardized Reporting API (`EnergyReporter` / `localems report`)
+- **Date:** 2026-11-26
+- **Status:** Decided
+- **Description:** Replaced redundant quarterly mart tables with a minimal daily materialized foundation plus a standardized query/export layer:
+  1. **Materialized daily marts:** `mart_daily_consumption`, `mart_daily_pv_summary`, and monthly `mart_plausibility_summary` live as materialized tables in `localems.duckdb` (zero SQLite `ATTACH` needed). Added lightweight DuckDB views `mart_monthly_consumption` and `mart_monthly_pv_summary` on top of the daily tables for direct SQL/BI convenience.
+  2. **`EnergyReporter` (`src/localems/reporting.py`) & `localems report` CLI:** Standardized methods `consumption()`, `pv_summary()`, `plausibility()`, `intervals()`, `groups()`, `objects()`, and `metering_points()` supporting dynamic periods (`day`, `month`, `quarter`, `year`, `total`), dynamic `group_by` rollups (`group`, `sub_group`, `object`, `allocation_type`, `site`, `plant_mode`), single/multi-value filters, `pivot=True` wide tables, raw 15-minute Parquet meter queries with local timestamps, and styled `.xlsx` / `.csv` exports via `export_dataframe()`.

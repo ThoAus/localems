@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
-import subprocess
-import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,11 +11,11 @@ import openpyxl
 import polars as pl
 import pytest
 
+from localems import EnergyReporter, LocalEmsConfig, get_dbt_project_dir, run_dbt
 from localems.cli import main as cli_main
 from localems.storage import ParquetMeasurementStore
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DBT_DIR = REPO_ROOT / "dbt"
 
 
 def _make_full_day_rows(
@@ -51,7 +48,9 @@ def _make_full_day_rows(
     return rows
 
 
-def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> None:
+def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     if importlib.util.find_spec("dbt.cli.main") is None:
         pytest.skip("dbt-duckdb is not installed in this environment")
 
@@ -185,50 +184,32 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
     store = ParquetMeasurementStore(data_dir / "parquet")
     store.write(pl.DataFrame(rows))
 
-    # Run dbt run & dbt test via `python -m dbt.cli.main`
-    duckdb_path = data_dir / "test_analytics.duckdb"
-    parquet_glob = (
-        data_dir / "parquet" / "energy_carrier=*" / "year=*" / "*.parquet"
-    ).as_posix()
-    sqlite_path = (data_dir / "db" / "masterdata.sqlite").as_posix()
+    # Run packaged dbt run & dbt test from an unrelated working directory
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOCALEMS_DUCKDB_EXT_DIR", (REPO_ROOT / ".duckdb_extensions").as_posix())
 
-    env = os.environ.copy()
-    env["LOCALEMS_DUCKDB_PATH"] = duckdb_path.as_posix()
-    env["LOCALEMS_SQLITE_PATH"] = sqlite_path
-    env["LOCALEMS_PARQUET_GLOB"] = parquet_glob
-    env["LOCALEMS_DUCKDB_EXT_DIR"] = (REPO_ROOT / ".duckdb_extensions").as_posix()
+    cfg = LocalEmsConfig.from_env(data_dir)
+    duckdb_path = cfg.duckdb_path
 
-    dbt_base = [
-        sys.executable,
-        "-m",
-        "dbt.cli.main",
-        "--profiles-dir",
-        str(DBT_DIR),
-        "--project-dir",
-        str(DBT_DIR),
-    ]
+    dbt_dir = get_dbt_project_dir()
+    assert (dbt_dir / "dbt_project.yml").is_file()
 
-    run_proc = subprocess.run(
-        [*dbt_base[:3], "run", *dbt_base[3:]],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert run_proc.returncode == 0, f"dbt run failed:\n{run_proc.stdout}\n{run_proc.stderr}"
+    run_res = run_dbt("run", config=cfg, capture_output=True)
+    assert run_res.ok, f"dbt run failed:\n{run_res.stdout}\n{run_res.stderr}"
 
-    test_proc = subprocess.run(
-        [*dbt_base[:3], "test", *dbt_base[3:]],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert test_proc.returncode == 0, f"dbt test failed:\n{test_proc.stdout}\n{test_proc.stderr}"
+    test_res = run_dbt("test", config=cfg, capture_output=True)
+    assert test_res.ok, f"dbt test failed:\n{test_res.stdout}\n{test_res.stderr}"
 
-    # Verify consumption mart, PV summary mart, and meter tree depths
+    # Verify CLI wrapper works identically and package dbt_project stays clean (read-only safe)
+    assert cli_main(["--data-dir", str(data_dir), "dbt", "test"]) == 0
+    assert (cfg.dbt_target_dir / "manifest.json").is_file()
+    assert not (dbt_dir / "target").exists()
+    assert not (dbt_dir / "logs").exists()
+    assert not (dbt_dir / ".user.yml").exists()
+
+    # Verify daily materialized tables + monthly convenience views directly (no ATTACH needed!)
     with duckdb.connect(str(duckdb_path), read_only=True) as con:
-        q_rows = con.execute(
+        m_rows = con.execute(
             """
             select
                 object_id,
@@ -237,8 +218,8 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
                 sub_group,
                 allocation_type,
                 round(total_consumption, 4) as total_consumption
-            from mart_quarterly_consumption
-            where year_quarter = '2026-Q1'
+            from mart_monthly_consumption
+            where year_month = '2026-02'
             order by energy_carrier, object_id
             """
         ).fetchall()
@@ -255,8 +236,8 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
                 total_site_consumption_kwh,
                 self_consumption_rate_pct,
                 autarky_rate_pct
-            from mart_quarterly_pv_summary
-            where year_quarter = '2026-Q1'
+            from mart_monthly_pv_summary
+            where year_month = '2026-02'
             order by site_metering_point_id
             """
         ).fetchall()
@@ -265,12 +246,12 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
             """
             select metering_point_id, meter_level, is_main_meter, tree_path
             from mart_plausibility_summary
-            where year_quarter = '2026-Q1'
+            where year_month = '2026-02'
             order by tree_path
             """
         ).fetchall()
 
-    results = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in q_rows}
+    results = {(r[0], r[1]): (r[2], r[3], r[4], r[5]) for r in m_rows}
     # Standalone PV generator must NOT appear as a consumer
     assert ("OBJ-SOLAR-PARK", "electricity") not in results
     assert results[("OBJ-STREETLIGHTS", "electricity")] == (
@@ -328,3 +309,117 @@ def test_end_to_end_mixed_group_meter_tree_pv_and_dbt_marts(tmp_path: Path) -> N
     assert tree_map["MP-LIB"] == (2, False, "MP-TOWN-MAIN > MP-BLDG > MP-LIB")
     assert tree_map["MP-SCHOOL"] == (1, False, "MP-TOWN-MAIN > MP-SCHOOL")
     assert tree_map["MP-WATER-1"] == (0, True, "MP-WATER-1")
+
+    # Verify standardized EnergyReporter API (grouping, single group/sub_group, pivot, PV, raw)
+    rep = EnergyReporter(cfg)
+
+    by_group = rep.consumption(period="month", group_by="group", energy_carrier="electricity")
+    grp_totals = dict(
+        zip(by_group["group"].to_list(), by_group["total_consumption"].to_list(), strict=True)
+    )
+    assert grp_totals["Buildings"] == pytest.approx(500.0)  # 380 Town Hall + 120 Library
+    assert grp_totals["Education"] == pytest.approx(300.0)
+    assert grp_totals["Public Lighting"] == pytest.approx(160.0)
+    assert grp_totals["Mobility"] == pytest.approx(40.0)
+
+    single_sub = rep.consumption(
+        period="quarter",
+        group="Buildings",
+        sub_group="Culture",
+        year=2026,
+    )
+    assert single_sub.height == 1
+    assert single_sub["object_id"].to_list() == ["OBJ-LIBRARY"]
+    assert single_sub["total_consumption"].to_list() == [pytest.approx(120.0)]
+
+    pivoted = rep.consumption(
+        period="quarter",
+        group_by=["group", "sub_group"],
+        energy_carrier="electricity",
+        pivot=True,
+    )
+    assert "2026-Q1" in pivoted.columns
+    assert "total" in pivoted.columns
+    assert pivoted["total"].sum() == pytest.approx(1000.0)
+
+    pv_q = rep.pv_summary(period="quarter", group="Public Lighting")
+    assert pv_q.height == 1
+    assert pv_q["self_consumption_rate_pct"].to_list() == [pytest.approx(62.5)]
+    assert pv_q["autarky_rate_pct"].to_list() == [pytest.approx(25.0)]
+
+    plaus = rep.plausibility(metering_point_id="MP-LIB")
+    assert plaus.height == 1
+    assert plaus["meter_level"].to_list() == [2]
+
+    raw_intervals = rep.intervals(
+        metering_point_ids=["MP-BLDG", "MP-LIB"],
+        energy_carrier="electricity",
+        channel="consumption",
+        year=2026,
+    )
+    assert raw_intervals.height == 2 * 96
+    assert "timestamp_local" in raw_intervals.columns
+
+    groups_df = rep.groups()
+    assert groups_df.height == 7
+
+    # Verify CLI `localems report` subcommands & .xlsx / .csv exports
+    xlsx_out = tmp_path / "buildings_report.xlsx"
+    csv_out = tmp_path / "pv_report.csv"
+    assert (
+        cli_main(
+            [
+                "--data-dir",
+                str(data_dir),
+                "report",
+                "consumption",
+                "--period",
+                "month",
+                "--group",
+                "Buildings",
+                "--group-by",
+                "sub_group",
+                "--pivot",
+                "-o",
+                str(xlsx_out),
+            ]
+        )
+        == 0
+    )
+    assert xlsx_out.is_file()
+    wb_out = openpyxl.load_workbook(xlsx_out)
+    assert wb_out["consumption"].max_row == 3  # header + Administration + Culture
+    wb_out.close()
+
+    assert (
+        cli_main(
+            [
+                "--data-dir",
+                str(data_dir),
+                "report",
+                "pv",
+                "--period",
+                "month",
+                "-o",
+                str(csv_out),
+            ]
+        )
+        == 0
+    )
+    assert csv_out.is_file()
+    assert (
+        cli_main(
+            [
+                "--data-dir",
+                str(data_dir),
+                "report",
+                "intervals",
+                "--meter",
+                "MP-BLDG,MP-LIB",
+                "--limit",
+                "5",
+            ]
+        )
+        == 0
+    )
+    assert cli_main(["--data-dir", str(data_dir), "report", "groups"]) == 0
